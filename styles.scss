@@ -1,0 +1,75 @@
+/*-- scss:defaults --*/
+$font-family-sans-serif: system-ui, -apple-system, "Segoe UI", sans-serif;
+$font-size-root: 17px;
+$primary: #216b9c;
+
+/*-- scss:rules --*/
+main.content {
+  line-height: 1.75;
+}
+main.content p,
+main.content li {
+  font-family: Georgia, "Times New Roman", serif;
+}
+main.content h1,
+main.content h2,
+main.content h3 {
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+main.content h2 {
+  margin-top: 2.6rem;
+}
+.chapter-kicker {
+  color: var(--bs-secondary-color);
+  font-family: system-ui, sans-serif;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+}
+.interactive-frame {
+  display: block;
+  width: 100%;
+  min-height: 390px;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 10px;
+  margin: 1.25rem 0 0.5rem;
+  background: var(--bs-body-bg);
+}
+.interactive-caption {
+  color: var(--bs-secondary-color);
+  font-size: 0.9rem;
+}
+.handwritten-figure img,
+img.handwritten-figure {
+  display: block;
+  max-width: 100%;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 6px;
+  width: 100%;
+  height: auto;
+}
+.callout {
+  margin-top: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+.callout-body p:last-child {
+  margin-bottom: 0.4rem;
+}
+@media (max-width: 600px) {
+  main.content {
+    line-height: 1.7;
+  }
+  main.content h1 {
+    font-size: 2rem;
+  }
+  .quarto-layout-panel {
+    overflow-wrap: anywhere;
+  }
+}
+@media print {
+  .interactive-frame,
+  .interactive-caption {
+    display: none;
+  }
+}

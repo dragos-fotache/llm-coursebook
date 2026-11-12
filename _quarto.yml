@@ -1,0 +1,63 @@
+project:
+  type: book
+  output-dir: _book
+  resources:
+    - assets/**
+
+book:
+  title: "Understanding Modern LLMs"
+  subtitle: "From derivatives to transformers"
+  author: "dragos-fotache"
+  output-file: understanding-modern-llms
+  site-url: https://dragos-fotache.github.io/llm-coursebook/
+  repo-url: https://github.com/dragos-fotache/llm-coursebook
+  repo-branch: main
+  repo-actions: [source]
+  search: true
+  page-navigation: true
+  downloads: [pdf]
+  chapters:
+    - index.qmd
+    - part: "Milestone 1: Learning mechanics"
+      chapters:
+        - units/01-local-change.qmd
+  appendices:
+    - handwritten.qmd
+    - reference.qmd
+
+format:
+  html:
+    theme:
+      light: [cosmo, styles.scss]
+      dark: [darkly, styles.scss]
+    toc: true
+    toc-depth: 3
+    code-copy: true
+    html-math-method: mathjax
+    lightbox: true
+    include-after-body: includes/book-scripts.html
+    grid:
+      body-width: 760px
+      sidebar-width: 240px
+      margin-width: 200px
+  typst:
+    template-partials:
+      - includes/typst-show.typ
+    papersize: a5
+    mainfont: "DejaVu Serif"
+    sansfont: "DejaVu Sans"
+    monofont: "DejaVu Sans Mono"
+    fontsize: 10pt
+    margin:
+      top: 16mm
+      bottom: 17mm
+      left: 15mm
+      right: 15mm
+    toc: true
+    toc-depth: 2
+
+lang: en
+number-depth: 2
+date-format: "D MMMM YYYY"
+execute:
+  enabled: false

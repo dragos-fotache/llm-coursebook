@@ -1,0 +1,290 @@
+<div id="llm-gradient-loss-surface">
+  <style>
+    #llm-gradient-loss-surface {
+      display: flex;
+      flex-direction: column;
+      gap: calc(var(--font-size-base) * 0.75);
+    }
+    #llm-gradient-loss-surface .loss-control {
+      display: flex;
+      flex-direction: column;
+      gap: calc(var(--font-size-base) * 0.25);
+    }
+    #llm-gradient-loss-surface .loss-chart {
+      min-width: 0;
+    }
+    #llm-gradient-loss-surface .loss-svg {
+      display: block;
+      width: 100%;
+      overflow: visible;
+    }
+    #llm-gradient-loss-surface .loss-svg text {
+      fill: var(--foreground);
+      font-family: inherit;
+    }
+    #llm-gradient-loss-surface .loss-svg .axis-tick {
+      fill: var(--muted-foreground);
+    }
+    #llm-gradient-loss-surface .loss-detail {
+      font-variant-numeric: tabular-nums;
+    }
+  </style>
+  <h3>Loss contours</h3>
+  <div class="loss-control">
+    <div class="viz-row">
+      <label class="form-label" for="llm-loss-learning-rate">Learning rate η</label>
+      <output class="tabular-nums" id="llm-loss-rate-value" for="llm-loss-learning-rate">0.100</output>
+    </div>
+    <input class="form-range" id="llm-loss-learning-rate" type="range" min="0" max="0.3" step="0.005" value="0.1">
+  </div>
+  <div class="viz-row loss-detail" id="llm-loss-detail" aria-live="polite"></div>
+  <div class="loss-chart" id="llm-loss-chart"></div>
+  <script>
+    (() => {
+      const root = document.getElementById("llm-gradient-loss-surface");
+      const slider = root.querySelector("#llm-loss-learning-rate");
+      const rateValue = root.querySelector("#llm-loss-rate-value");
+      const detail = root.querySelector("#llm-loss-detail");
+      const chart = root.querySelector("#llm-loss-chart");
+      const ns = "http://www.w3.org/2000/svg";
+      const bounds = { wMin: 0.6, wMax: 3.6, bMin: 0.5, bMax: 2.5 };
+      let eta = 0.1;
+      let displayedEta = eta;
+      let animation = null;
+      let geometry = null;
+      let arrow = null;
+      let point = null;
+      let pointLabel = null;
+      let startLabel = null;
+      let svg = null;
+
+      function cleanRate(value) {
+        return typeof value === "number" && Number.isFinite(value)
+          ? Math.max(0, Math.min(0.3, value))
+          : 0.1;
+      }
+
+      function readState(state) {
+        return cleanRate(state && state.privateContent && state.privateContent.eta);
+      }
+
+      function model(rate) {
+        return { w: 1 + 8 * rate, b: 1 + 4 * rate, loss: Math.pow(20 * rate - 2, 2) };
+      }
+
+      function element(tag, attributes, textValue, parent) {
+        const item = document.createElementNS(ns, tag);
+        Object.entries(attributes || {}).forEach(([key, value]) => item.setAttribute(key, String(value)));
+        if (textValue !== undefined) item.textContent = textValue;
+        (parent || svg).appendChild(item);
+        return item;
+      }
+
+      function coordinates(w, b) {
+        return [
+          geometry.left + (w - bounds.wMin) * geometry.scale,
+          geometry.top + (bounds.bMax - b) * geometry.scale
+        ];
+      }
+
+      function clippedContour(total) {
+        const candidates = [
+          [bounds.wMin, total - 2 * bounds.wMin],
+          [bounds.wMax, total - 2 * bounds.wMax],
+          [(total - bounds.bMin) / 2, bounds.bMin],
+          [(total - bounds.bMax) / 2, bounds.bMax]
+        ];
+        const result = [];
+        candidates.forEach(([w, b]) => {
+          if (w < bounds.wMin - 1e-9 || w > bounds.wMax + 1e-9 ||
+              b < bounds.bMin - 1e-9 || b > bounds.bMax + 1e-9) return;
+          if (!result.some(([rw, rb]) => Math.abs(w - rw) + Math.abs(b - rb) < 1e-8)) {
+            result.push([w, b]);
+          }
+        });
+        result.sort((a, b) => a[0] - b[0]);
+        return result.length === 2 ? result : null;
+      }
+
+      function updateReadout() {
+        const value = model(eta);
+        slider.value = String(eta);
+        rateValue.textContent = eta.toFixed(3);
+        detail.textContent = "w = " + value.w.toFixed(2) + " · b = " +
+          value.b.toFixed(2) + " · loss = " + value.loss.toFixed(4);
+        if (svg) {
+          svg.setAttribute("aria-label", "Loss contours in weight and bias coordinates. " +
+            "The start is weight 1, bias 1, loss 4. At learning rate " + eta.toFixed(3) +
+            ", the updated weight is " + value.w.toFixed(2) + ", bias " +
+            value.b.toFixed(2) + ", and loss " + value.loss.toFixed(4) + ".");
+        }
+      }
+
+      function movePoint(rate) {
+        if (!geometry || !point) return;
+        displayedEta = rate;
+        const value = model(rate);
+        const [sx, sy] = coordinates(1, 1);
+        const [px, py] = coordinates(value.w, value.b);
+        point.setAttribute("cx", px);
+        point.setAttribute("cy", py);
+        arrow.setAttribute("x2", px);
+        arrow.setAttribute("y2", py);
+        arrow.setAttribute("visibility", rate < 0.006 ? "hidden" : "visible");
+        const labelOnLeft = px > geometry.left + geometry.width - geometry.font * 4;
+        pointLabel.setAttribute("x", px + (labelOnLeft ? -10 : 10));
+        pointLabel.setAttribute("y", py - 10);
+        pointLabel.setAttribute("text-anchor", labelOnLeft ? "end" : "start");
+        pointLabel.setAttribute("visibility", rate < 0.018 ? "hidden" : "visible");
+        startLabel.textContent = rate < 0.018 ? "start / new" : "start";
+      }
+
+      function render() {
+        if (animation !== null) cancelAnimationFrame(animation);
+        animation = null;
+        const width = Math.max(280, chart.clientWidth || root.clientWidth || 736);
+        const font = parseFloat(getComputedStyle(root).getPropertyValue("--font-size-base")) || 14;
+        const left = font * 3;
+        const right = font * 1.1;
+        const top = font * 1.8;
+        const plotWidth = width - left - right;
+        const scale = plotWidth / (bounds.wMax - bounds.wMin);
+        const plotHeight = scale * (bounds.bMax - bounds.bMin);
+        const height = top + plotHeight + font * 3.3;
+        geometry = { left, top, width: plotWidth, height: plotHeight, scale, font };
+        chart.replaceChildren();
+        svg = document.createElementNS(ns, "svg");
+        svg.setAttribute("class", "loss-svg");
+        svg.setAttribute("role", "img");
+        svg.setAttribute("width", width);
+        svg.setAttribute("height", height);
+        svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+        chart.appendChild(svg);
+        const defs = element("defs");
+        const marker = element("marker", {
+          id: "llm-loss-arrow-tip", markerWidth: 8, markerHeight: 8,
+          refX: 6, refY: 3, orient: "auto", markerUnits: "strokeWidth"
+        }, undefined, defs);
+        element("path", {
+          d: "M0 0 L6 3 L0 6 Z", fill: "var(--viz-series-1)"
+        }, undefined, marker);
+
+        const tickWs = width < 400 ? [1, 2, 3] : [1, 1.5, 2, 2.5, 3, 3.5];
+        const tickBs = width < 400 ? [1, 2] : [0.5, 1, 1.5, 2, 2.5];
+        tickWs.forEach(w => {
+          const [x, y] = coordinates(w, bounds.bMin);
+          element("line", { x1: x, x2: x, y1: y, y2: y + 4, stroke: "var(--border)" });
+          element("text", {
+            x, y: y + font * 1.4, "text-anchor": "middle", class: "axis-tick text-small"
+          }, String(w));
+        });
+        tickBs.forEach(b => {
+          const [x, y] = coordinates(bounds.wMin, b);
+          element("line", { x1: x - 4, x2: x, y1: y, y2: y, stroke: "var(--border)" });
+          element("text", {
+            x: x - 9, y, "text-anchor": "end", "dominant-baseline": "middle",
+            class: "axis-tick text-small"
+          }, String(b));
+        });
+        element("line", {
+          x1: left, y1: top, x2: left, y2: top + plotHeight,
+          stroke: "var(--border)", "stroke-width": 1
+        });
+        element("line", {
+          x1: left, y1: top + plotHeight, x2: left + plotWidth, y2: top + plotHeight,
+          stroke: "var(--border)", "stroke-width": 1
+        });
+        element("text", {
+          x: left + plotWidth / 2, y: height - font * 0.3, "text-anchor": "middle"
+        }, "Weight w");
+        const axisY = top + plotHeight / 2;
+        element("text", {
+          x: font * 0.9, y: axisY, "text-anchor": "middle",
+          transform: "rotate(-90 " + font * 0.9 + " " + axisY + ")"
+        }, "Bias b");
+
+        [-3, -2, -1, 0, 1, 2, 3, 4].forEach(residual => {
+          const segment = clippedContour(5 + residual);
+          if (!segment) return;
+          const [a, b] = segment;
+          const [ax, ay] = coordinates(a[0], a[1]);
+          const [bx, by] = coordinates(b[0], b[1]);
+          const isMinimum = residual === 0;
+          element("line", {
+            x1: ax, y1: ay, x2: bx, y2: by,
+            stroke: isMinimum ? "var(--foreground)" : "var(--muted-foreground)",
+            "stroke-width": isMinimum ? 1.6 : 1
+          });
+          if (isMinimum || Math.hypot(bx - ax, by - ay) > font * 6) {
+            element("text", { x: ax + 5, y: ay - 8, class: "text-small" },
+              "L=" + residual * residual);
+          }
+        });
+
+        const [sx, sy] = coordinates(1, 1);
+        const [ex, ey] = coordinates(3.4, 2.2);
+        element("line", {
+          x1: sx, y1: sy, x2: ex, y2: ey, stroke: "var(--muted-foreground)",
+          "stroke-width": 1, "stroke-dasharray": "4 5", opacity: 0.6
+        });
+        arrow = element("line", {
+          x1: sx, y1: sy, x2: sx, y2: sy, stroke: "var(--viz-series-1)",
+          "stroke-width": 2, "marker-end": "url(#llm-loss-arrow-tip)"
+        });
+        element("circle", { cx: sx, cy: sy, r: 3.5, fill: "var(--foreground)" });
+        startLabel = element("text", {
+          x: sx - 8, y: sy + font * 1.5, "text-anchor": "end", class: "text-small"
+        }, "start");
+        point = element("circle", {
+          cx: sx, cy: sy, r: 5.5, fill: "var(--viz-series-1)"
+        });
+        pointLabel = element("text", { x: sx + 10, y: sy - 10, class: "text-small" }, "new");
+        movePoint(eta);
+        updateReadout();
+      }
+
+      function animateTo(rate) {
+        eta = cleanRate(rate);
+        updateReadout();
+        if (animation !== null) cancelAnimationFrame(animation);
+        if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          movePoint(eta);
+          animation = null;
+          return;
+        }
+        const from = displayedEta;
+        const to = eta;
+        const start = performance.now();
+        function frame(now) {
+          const t = Math.min(1, (now - start) / 160);
+          const eased = 1 - Math.pow(1 - t, 3);
+          movePoint(from + (to - from) * eased);
+          if (t < 1) animation = requestAnimationFrame(frame);
+          else animation = null;
+        }
+        animation = requestAnimationFrame(frame);
+      }
+
+      slider.addEventListener("input", () => animateTo(Number(slider.value)));
+      slider.addEventListener("change", () => {
+        const value = model(eta);
+        if (window.openai && typeof window.openai.setWidgetState === "function") {
+          window.openai.setWidgetState({
+            modelContent: { learningRate: eta, weight: value.w, bias: value.b, loss: value.loss },
+            privateContent: { eta }
+          }).catch(() => {});
+        }
+      });
+      window.addEventListener("openai:set_globals", event => {
+        const globals = event.detail && event.detail.globals;
+        if (globals && Object.prototype.hasOwnProperty.call(globals, "widgetState")) {
+          eta = readState(globals.widgetState);
+          render();
+        }
+      });
+      eta = readState(window.openai && window.openai.widgetState);
+      render();
+      new ResizeObserver(render).observe(chart);
+    })();
+  </script>
+</div>

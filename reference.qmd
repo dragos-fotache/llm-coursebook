@@ -1,0 +1,31 @@
+# Reading references
+
+These are supporting references for the learning project. Read selected sections when they help with the current question.
+
+## Mathematical foundations
+
+Marc Peter Deisenroth, A. Aldo Faisal, and Cheng Soon Ong, *Mathematics for Machine Learning*. The authors provide a free PDF. Chapter 5 covers vector calculus; later chapters cover probability and optimization.
+
+<https://mml-book.github.io/>
+
+## Computational graphs and backpropagation
+
+*Dive into Deep Learning*, section 5.3, "Forward Propagation, Backward Propagation, and Computational Graphs."
+
+<https://d2l.ai/chapter_multilayer-perceptrons/backprop.html>
+
+## Automatic differentiation
+
+*Dive into Deep Learning*, section 2.5, "Automatic Differentiation."
+
+<https://d2l.ai/chapter_preliminaries/autograd.html>
+
+The official PyTorch tutorial, "Automatic Differentiation with torch.autograd," connects computational graphs to framework behavior.
+
+<https://docs.pytorch.org/tutorials/beginner/basics/autogradqs_tutorial.html>
+
+## A later architectural reference
+
+Qwen3.5-27B was discussed as an example of a modern model combining mechanisms beyond a conventional transformer. The exact model for a later unit has not been selected.
+
+<https://huggingface.co/Qwen/Qwen3.5-27B>

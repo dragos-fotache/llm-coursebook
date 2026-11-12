@@ -1,0 +1,11 @@
+<script>
+(() => {
+  const fit = frame => {
+    frame.style.height = Math.ceil(frame.clientWidth * 2 / 3 + 220) + "px";
+  };
+  document.querySelectorAll("iframe.interactive-frame").forEach(frame => {
+    fit(frame);
+    new ResizeObserver(() => fit(frame)).observe(frame);
+  });
+})();
+</script>

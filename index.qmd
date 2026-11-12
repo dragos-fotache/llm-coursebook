@@ -1,0 +1,42 @@
+# A working coursebook {.unnumbered}
+
+This book follows a long-term project to understand modern language models through mathematics, implementation, experiments, and research. Its destination is practical: read a model's paper and source code, trace its computations, derive its central equations, and implement a smaller version.
+
+The chapters grow out of completed learning units. Each brings together the explanation, exercises, worked solutions, and the reasoning developed while doing them.
+
+::: {.callout-note title="Start here"}
+[Unit 1: Derivatives as predictions of local change](units/01-local-change.qmd) is complete. It develops scalar derivatives, gradients, directional derivatives, and a first gradient-descent update.
+
+The next unit will organize those derivative calculations into computational graphs.
+:::
+
+## Reading this book
+
+The website includes interactive figures and expandable solutions. Try an exercise before opening its solution; then compare the reasoning, not just the final number.
+
+The [handwritten workbook](handwritten.qmd) preserves the original calculations. Small notation corrections and conceptual clarifications appear in the edited lessons.
+
+The [printable PDF](understanding-modern-llms.pdf) contains the same lesson, solutions, and handwritten working. Its figures are static. Use the website when you want to change a parameter and inspect what happens.
+
+## The route ahead
+
+| Milestone | Main question | Practical work |
+|---|---|---|
+| Learning mechanics | How do we calculate and use the gradient of a loss? | Derive and verify a small network's backward pass |
+| Probabilistic prediction | What does a language model estimate, and why this training objective? | Build a simple next-token model |
+| Transformers | How does attention turn a token sequence into predictions? | Implement a compact causal transformer |
+| Training in practice | What makes a training run succeed or fail? | Run controlled experiments |
+| A modern architecture | How do real model configurations connect to equations and code? | Reproduce selected components at smaller dimensions |
+| Assistants and inference | How do training, decoding, memory, and tools shape behavior? | Inspect real inference and assistant workflows |
+
+This is a flexible route. Topics receive more detail as we approach them. Understanding public architectures and methods is achievable; explaining every behavior of a trained model also touches open research.
+
+## A recurring learning cycle
+
+1. Ask a concrete question.
+2. Develop the intuition and derive the mathematics.
+3. Implement or calculate a small example.
+4. Check the result independently.
+5. Record what is understood and what remains uncertain.
+
+The mathematics will mainly draw on linear algebra, multivariable calculus, probability, and optimization. Selected book passages provide deeper treatments when needed; see the [reading references](reference.qmd).

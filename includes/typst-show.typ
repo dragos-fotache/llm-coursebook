@@ -13,6 +13,30 @@
   }
 }
 #show link: set text(fill: accent)
+// Long worked solutions must flow across A5 pages instead of overflowing them.
+#let callout(body: [], title: "Callout", background_color: rgb("#dddddd"), icon: none, icon_color: black, body_background_color: white) = {
+  block(
+    breakable: true,
+    fill: background_color,
+    stroke: (paint: icon_color, thickness: 0.5pt, cap: "round"),
+    width: 100%,
+    radius: 2pt,
+    block(
+      inset: 1pt,
+      width: 100%,
+      below: 0pt,
+      block(
+        fill: background_color,
+        width: 100%,
+        inset: 8pt)[#if icon != none [#text(icon_color, weight: 900)[#icon] ]#title]) +
+      if(body != []){
+        block(
+          inset: 1pt,
+          width: 100%,
+          block(fill: body_background_color, width: 100%, inset: 8pt, body))
+      }
+    )
+}
 #let part(title) = block(above: 1.5em, below: 1em)[
   #text(font: "DejaVu Sans", size: 12pt, fill: accent, weight: "bold", title)
 ]

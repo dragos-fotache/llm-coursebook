@@ -21,8 +21,8 @@ book:
     - part: "Milestone 1: Learning mechanics"
       chapters:
         - units/01-local-change.qmd
+        - units/02-computational-graphs.qmd
   appendices:
-    - handwritten.qmd
     - reference.qmd
 
 format:

@@ -99,7 +99,6 @@ The discrepancy is $0.0004$.
 
 When squaring a negative value, write $(-2)^2=4$. Under standard precedence, $-2^2$ means $-(2^2)=-4$.
 
-See the [original handwritten calculation](../handwritten.qmd#sec-work-scalar).
 :::
 
 ### Explain the discrepancy
@@ -218,7 +217,6 @@ Increasing either parameter alone by a sufficiently small positive amount decrea
 
 The phrase "first-order" matters: this is a comparison of local sensitivities, not a promise of an exact ratio for arbitrary finite changes.
 
-See the [original partial-derivative calculation](../handwritten.qmd#sec-work-partials).
 :::
 
 ## The gradient collects those sensitivities
@@ -299,7 +297,6 @@ For move A, the prediction changes by $0.03$. Expanding the squared residual add
 
 A zero gradient dot product generally means zero first-order change. Exact equality for a finite step needs more information about the function.
 
-See the [original simultaneous-change calculation](../handwritten.qmd#sec-work-simultaneous).
 :::
 
 ## Directional derivatives and the steepest direction
@@ -353,7 +350,6 @@ Fixing the length isolates direction. Without that constraint, multiplying a des
 
 This steepest-direction statement uses Euclidean distance and a nonzero gradient.
 
-See the [original direction calculation](../handwritten.qmd#sec-work-direction).
 :::
 
 ## From a direction to a learning update
@@ -412,7 +408,6 @@ This gives $(w_{\mathrm{new}},b_{\mathrm{new}})=(1.8,1.4)$, prediction $5$, and 
 
 At $\eta=0.2$, the loss returns to $4$. Larger positive rates make it exceed the starting loss. These bounds belong to this particular example, not to all training problems.
 
-See the [original learning-rate calculation](../handwritten.qmd#sec-work-update).
 :::
 
 ### Explore the loss geometry

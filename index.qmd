@@ -7,16 +7,16 @@ The chapters grow out of completed learning units. Each brings together the expl
 ::: {.callout-note title="Start here"}
 [Unit 1: Derivatives as predictions of local change](units/01-local-change.qmd) is complete. It develops scalar derivatives, gradients, directional derivatives, and a first gradient-descent update.
 
-The next unit will organize those derivative calculations into computational graphs.
+[Unit 2: Computational graphs and the multivariable chain rule](units/02-computational-graphs.qmd) is complete. It organizes calculations into graphs, follows derivatives through shared values, and derives a nonlinear neuron's backward pass.
+
+Next comes scalar automatic differentiation: implementing the procedure in Python.
 :::
 
 ## Reading this book
 
 The website includes interactive figures and expandable solutions. Try an exercise before opening its solution; then compare the reasoning, not just the final number.
 
-The [handwritten workbook](handwritten.qmd) preserves the original calculations. Small notation corrections and conceptual clarifications appear in the edited lessons.
-
-The [printable PDF](understanding-modern-llms.pdf) contains the same lesson, solutions, and handwritten working. Its figures are static. Use the website when you want to change a parameter and inspect what happens.
+The [printable PDF](understanding-modern-llms.pdf) contains the same lessons and worked solutions. Its figures are static. Use the website when you want to change a parameter and inspect what happens.
 
 ## The route ahead
 

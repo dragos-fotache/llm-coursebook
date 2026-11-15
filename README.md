@@ -1,6 +1,6 @@
 # Understanding Modern LLMs - coursebook
 
-An evolving Quarto website built from completed learning units, with typeset mathematics, expandable worked solutions, executable Python examples, and interactive figures.
+An evolving Quarto website built from the learning sessions, with typeset mathematics, expandable worked solutions, executable Python examples, and interactive figures. Units may be recorded in parts; clearly mark their current scope and in-progress status.
 
 No Quarto account is required. Install the open-source Quarto CLI locally, or let the GitHub Actions workflow render the source.
 
@@ -46,3 +46,5 @@ The editable plot fragment is assets/loss-surface-source.html; assets/loss-surfa
 The optional scripts/generate_graphs.py regenerates unit 2's SVG computational graphs with Graphviz. These assets are also checked in; publishing does not require Graphviz.
 
 Unit 3's assets/scalar_autodiff.py is the standalone worked implementation. Keep it consistent with the complete code listing in the chapter. assets/backward-trace.html is a standalone interactive trace of the shared graph; it runs entirely in the browser and includes an intentionally early-callback order for comparison.
+
+Unit 4 is currently recorded through exercise 5, the batched affine backward pass. Keep its in-progress label until the remaining unit work is completed. assets/bias-broadcast.html is a browser-local interactive view of the covered three-example bias-replication exercise. It uses no external scripts or saved state.

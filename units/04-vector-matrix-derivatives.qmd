@@ -1,0 +1,533 @@
+# Vector and matrix derivatives
+
+<p class="chapter-kicker">Milestone 1 · Unit 4 · In progress · Recorded through exercise 5 on 15 November 2026</p>
+
+The scalar engine in unit 3 propagated derivatives by multiplying local rates and accumulating contributions from shared paths. The same reasoning applies when an operation consumes and produces entire vectors or matrices.
+
+> How do we organize those local derivatives, and how do the resulting shapes determine a backward calculation?
+
+::: {.callout-note title="Scope of this chapter"}
+This chapter records the material covered so far in unit 4: Jacobians as local linear maps, the scalar-loss backward rule, matrix-weight gradients, shared parameters, and the batched affine layer. It includes the five completed exercises and their worked solutions. Unit 4 is still in progress.
+:::
+
+## A Jacobian predicts local vector changes
+
+In unit 1, a small displacement of a vector input changed a scalar output approximately by
+
+$$
+L(x+\Delta x)-L(x)\approx\nabla L(x)^\top\Delta x.
+$$
+
+Use **column vectors** throughout. Now let $f:\mathbb R^n\to\mathbb R^m$ have components $f_1,\ldots,f_m$. Each component is a scalar function, so for a smooth $f$,
+
+$$
+\Delta f_i\approx\sum_{j=1}^{n}
+\frac{\partial f_i}{\partial x_j}(x)\,\Delta x_j,
+\qquad
+\Delta f_i=f_i(x+\Delta x)-f_i(x).
+$$
+
+Stack these component equations. Their coefficients form the **Jacobian**:
+
+$$
+(J_f(x))_{ij}=\frac{\partial f_i}{\partial x_j}(x),
+\qquad
+\Delta f\approx J_f(x)\Delta x.
+$$
+
+For two inputs and two outputs,
+
+$$
+J_f(x)=
+\begin{pmatrix}
+\dfrac{\partial f_1}{\partial x_1}&\dfrac{\partial f_1}{\partial x_2}\\[5pt]
+\dfrac{\partial f_2}{\partial x_1}&\dfrac{\partial f_2}{\partial x_2}
+\end{pmatrix}.
+$$
+
+Every entry is evaluated at the same starting point $x$. The organization follows the matrix multiplication:
+
+- **Row $i$** contains the derivatives of output $f_i$ with respect to the inputs.
+- **Column $j$** describes the first-order response of every output to a change in input coordinate $x_j$ alone.
+
+The general dimensions are
+
+$$
+\underbrace{\Delta f}_{m\times1}
+\approx
+\underbrace{J_f(x)}_{m\times n}
+\underbrace{\Delta x}_{n\times1}.
+$$
+
+At a fixed $x$, multiplication by $J_f(x)$ is a linear map from input displacements to predicted output displacements. This is the derivative's **local linear map** interpretation. To predict the new output value, add the starting output:
+
+$$
+f(x+\Delta x)\approx f(x)+J_f(x)\Delta x.
+$$
+
+For a single scalar output $L$, the Jacobian has one row and equals $\nabla L(x)^\top$. The gradient itself remains a column.
+
+### Exercise 1: predict two output changes
+
+Take
+
+$$
+f(x_1,x_2)=\begin{pmatrix}x_1^2+x_2\\x_1x_2\end{pmatrix},
+\qquad
+x=\begin{pmatrix}2\\3\end{pmatrix},
+\qquad
+\Delta x=\begin{pmatrix}0.01\\-0.02\end{pmatrix}.
+$$
+
+1. Derive the symbolic Jacobian, then evaluate it at $(2,3)$.
+2. Use the Jacobian to predict the output change.
+3. Calculate the actual output change. Expand the component expressions to identify the terms omitted by the linear approximation.
+4. Interpret the second column when only $x_2$ changes by a small amount $h$.
+
+::: {.callout-note collapse="true" title="Worked solution: the Jacobian and its remainder"}
+The four local derivatives give
+
+$$
+J_f(x_1,x_2)=\begin{pmatrix}2x_1&1\\x_2&x_1\end{pmatrix},
+\qquad
+J_f(2,3)=\begin{pmatrix}4&1\\3&2\end{pmatrix}.
+$$
+
+The predicted change is
+
+$$
+J_f(2,3)\Delta x
+=\begin{pmatrix}4(0.01)-0.02\\3(0.01)+2(-0.02)\end{pmatrix}
+=\begin{pmatrix}0.02\\-0.01\end{pmatrix}.
+$$
+
+The starting and new outputs are
+
+$$
+f(2,3)=\begin{pmatrix}7\\6\end{pmatrix},
+\qquad
+f(2.01,2.98)=\begin{pmatrix}7.0201\\5.9898\end{pmatrix}.
+$$
+
+Thus the actual change is $(0.0201,-0.0102)^\top$. Expanding before substituting numbers makes the discrepancy explicit:
+
+$$
+\begin{aligned}
+\Delta f_1
+&=(x_1+\Delta x_1)^2+x_2+\Delta x_2-(x_1^2+x_2)\\
+&=2x_1\Delta x_1+\Delta x_2+(\Delta x_1)^2,\\[4pt]
+\Delta f_2
+&=(x_1+\Delta x_1)(x_2+\Delta x_2)-x_1x_2\\
+&=x_2\Delta x_1+x_1\Delta x_2+\Delta x_1\Delta x_2.
+\end{aligned}
+$$
+
+The linear approximation omits the terms quadratic in the displacement. Actual change minus predicted change is therefore
+
+$$
+\begin{pmatrix}(\Delta x_1)^2\\\Delta x_1\Delta x_2\end{pmatrix}
+=\begin{pmatrix}0.0001\\-0.0002\end{pmatrix}.
+$$
+
+The second Jacobian column is $(1,2)^\top$. A small change $h$ in $x_2$ alone gives the first-order output change $(h,2h)^\top$. In this particular example that change is exact for any $h$: with $x_1=2$ fixed, both output components are affine in $x_2$. Equivalently, both remainder terms vanish when $\Delta x_1=0$.
+:::
+
+## A scalar loss propagates backward through a Jacobian
+
+Write $y=f(x)$, with a downstream scalar loss $L(y)$. For each input coordinate, the chain rule adds the paths through all outputs:
+
+$$
+\frac{\partial L}{\partial x_j}
+=\sum_{i=1}^{m}\frac{\partial L}{\partial y_i}
+\frac{\partial y_i}{\partial x_j}.
+$$
+
+Column $j$ of $J_f$ contains the local derivatives in this sum. Its dot product with the incoming gradient $\nabla_y L$ gives one input-gradient component. Collecting those components yields
+
+$$
+\boxed{\nabla_x L=J_f(x)^\top\nabla_y L.}
+$$
+
+The dimensions confirm the orientation:
+
+$$
+\underbrace{\nabla_x L}_{n\times1}
+=\underbrace{J_f(x)^\top}_{n\times m}
+\underbrace{\nabla_y L}_{m\times1}.
+$$
+
+Transposing the entire equation gives the equivalent row form,
+
+$$
+(\nabla_x L)^\top=(\nabla_y L)^\top J_f(x).
+$$
+
+The row-vector multiplication is a **vector–Jacobian product**, or **VJP**. Automatic differentiation also commonly uses this name for the equivalent column calculation $J_f^\top\nabla_y L$. Both expressions represent the same component chain-rule sums.
+
+The Jacobian describes the local operation $f$. The incoming gradient describes how the chosen downstream loss responds to its outputs. Their product combines these two pieces, just as a scalar backward callback does.
+
+### Exercise 2: propagate a scalar-loss gradient
+
+Keep the function from exercise 1 and $x=(2,3)^\top$. Define
+
+$$
+y=f(x),\qquad L(y_1,y_2)=(y_1-1)^2+(y_2-2)^2.
+$$
+
+Calculate $y$ and $\nabla_y L$. Show both path contributions to each input derivative, then organize the result as a matrix product. Check the general dimensions for $n$ inputs and $m$ outputs.
+
+::: {.callout-note collapse="true" title="Worked solution: path sums and the transpose"}
+The forward value is $y=(7,6)^\top$, so
+
+$$
+\nabla_y L
+=\begin{pmatrix}2(y_1-1)\\2(y_2-2)\end{pmatrix}
+=\begin{pmatrix}12\\8\end{pmatrix}.
+$$
+
+The input derivatives are
+
+$$
+\begin{aligned}
+\frac{\partial L}{\partial x_1}&=12\cdot4+8\cdot3=72,\\
+\frac{\partial L}{\partial x_2}&=12\cdot1+8\cdot2=28.
+\end{aligned}
+$$
+
+Collecting these sums gives
+
+$$
+\nabla_x L
+=\begin{pmatrix}4&3\\1&2\end{pmatrix}
+\begin{pmatrix}12\\8\end{pmatrix}
+=\begin{pmatrix}72\\28\end{pmatrix}.
+$$
+
+The first row of this multiplication was the first column of $J_f$. This is why the backward rule uses the transpose. With $J_f$ of shape $m\times n$, its transpose maps an $m\times1$ output gradient to an $n\times1$ input gradient.
+
+The same result in row form is
+
+$$
+(12\;8)\begin{pmatrix}4&1\\3&2\end{pmatrix}=(72\;28).
+$$
+:::
+
+## A gradient with respect to a weight matrix
+
+Consider one input column and one matrix multiplication:
+
+$$
+z=Ax,\qquad
+A\in\mathbb R^{m\times n},\quad
+x\in\mathbb R^{n\times1},\quad
+z\in\mathbb R^{m\times1}.
+$$
+
+Componentwise, $z_i=\sum_{j=1}^{n}A_{ij}x_j$. Holding $A$ fixed, $\partial z_i/\partial x_j=A_{ij}$, so the input Jacobian is $A$. Given an incoming gradient $g=\nabla_z L$, the input backward rule is
+
+$$
+\nabla_x L=A^\top g.
+$$
+
+Now hold $x$ fixed and differentiate with respect to the weights. A matrix stores many scalar weights; its loss gradient collects one derivative per entry:
+
+$$
+(\nabla_A L)_{ij}=\frac{\partial L}{\partial A_{ij}}.
+$$
+
+This gradient has the same shape as $A$. Changing only $A_{ij}$ directly affects only output $z_i$, at rate $x_j$. Consequently,
+
+$$
+\frac{\partial L}{\partial A_{ij}}=g_i x_j,
+\qquad
+\boxed{\nabla_A L=gx^\top.}
+$$
+
+This is an **outer product**:
+
+$$
+\underbrace{g}_{m\times1}
+\underbrace{x^\top}_{1\times n}
+=\underbrace{\nabla_A L}_{m\times n}.
+$$
+
+Every row of the gradient is the input row $x^\top$ scaled by the corresponding incoming sensitivity $g_i$.
+
+### Exercise 3: calculate the input and weight gradients
+
+Use
+
+$$
+A=\begin{pmatrix}1&2&-1\\0&3&1\end{pmatrix},
+\qquad
+x=\begin{pmatrix}2\\-1\\1\end{pmatrix},
+\qquad
+g=\begin{pmatrix}4\\-2\end{pmatrix}.
+$$
+
+The vector $g$ is supplied by an omitted downstream scalar-loss computation. Calculate $z$ and $\nabla_x L$. Derive each weight derivative from its affected output, calculate all six entries, and organize them into one matrix product with general dimensions.
+
+::: {.callout-note collapse="true" title="Worked solution: an outer product of sensitivities and inputs"}
+The forward output is
+
+$$
+z=Ax=\begin{pmatrix}2-2-1\\-3+1\end{pmatrix}
+=\begin{pmatrix}-1\\-2\end{pmatrix}.
+$$
+
+The input gradient is
+
+$$
+\nabla_x L
+=\begin{pmatrix}1&0\\2&3\\-1&1\end{pmatrix}
+\begin{pmatrix}4\\-2\end{pmatrix}
+=\begin{pmatrix}4\\2\\-6\end{pmatrix}.
+$$
+
+For a weight $A_{ij}$, the single affected output gives
+
+$$
+\frac{\partial L}{\partial A_{ij}}
+=\frac{\partial L}{\partial z_i}\frac{\partial z_i}{\partial A_{ij}}
+=g_i x_j.
+$$
+
+Thus the first gradient row is $4(2,-1,1)$ and the second is $-2(2,-1,1)$:
+
+$$
+\nabla_A L
+=\begin{pmatrix}4\\-2\end{pmatrix}(2\;-1\;1)
+=\begin{pmatrix}8&-4&4\\-4&2&-2\end{pmatrix}.
+$$
+
+For example, $A_{23}$ affects $z_2$ through the term $A_{23}x_3$, so its loss derivative is $g_2x_3=-2$. The output index comes from the weight's row; the input index comes from its column.
+
+The general shape is $(m\times1)(1\times n)=m\times n$, matching the weight matrix.
+:::
+
+### Compute the backward product directly
+
+Flattening the $mn$ weights into one vector would give a full Jacobian of the $m$ outputs with respect to those weights of shape $m\times(mn)$. Most of its entries are zero because a weight in one row directly affects only that row's output.
+
+The outer product $gx^\top$ computes the contracted backward result directly in its natural $m\times n$ shape. This preserves the component chain rule while avoiding construction of the larger full Jacobian.
+
+## Shared parameters collect contributions from every example
+
+Use one weight matrix and one bias vector for two inputs:
+
+$$
+z^{(1)}=Ax^{(1)}+b,\qquad
+z^{(2)}=Ax^{(2)}+b.
+$$
+
+The two expressions reference the same parameter entries. One scalar loss $L$ depends on both outputs and supplies $g^{(r)}=\nabla_{z^{(r)}}L$.
+
+A shared weight has a path through each example:
+
+$$
+\frac{\partial L}{\partial A_{ij}}
+=g_i^{(1)}x_j^{(1)}+g_i^{(2)}x_j^{(2)}.
+$$
+
+The bias $b_i$ enters each $z_i^{(r)}$ with local derivative one, giving
+
+$$
+\frac{\partial L}{\partial b_i}=g_i^{(1)}+g_i^{(2)}.
+$$
+
+These are the same accumulation rules used for shared values in the scalar engine, now organized by parameter entries.
+
+### Exercise 4: two examples share weights and bias
+
+Keep the same $A$ and use
+
+$$
+x^{(1)}=\begin{pmatrix}2\\-1\\1\end{pmatrix},\qquad
+g^{(1)}=\begin{pmatrix}4\\-2\end{pmatrix},
+$$
+
+$$
+x^{(2)}=\begin{pmatrix}1\\2\\-1\end{pmatrix},\qquad
+g^{(2)}=\begin{pmatrix}-1\\3\end{pmatrix}.
+$$
+
+Show both example contributions to a weight derivative and a bias derivative. Calculate the complete matrix and bias gradients.
+
+::: {.callout-note collapse="true" title="Worked solution: add the shared-parameter contributions"}
+The weight gradient is the sum of two outer products:
+
+$$
+\begin{aligned}
+\nabla_A L
+&=g^{(1)}(x^{(1)})^\top+g^{(2)}(x^{(2)})^\top\\
+&=\begin{pmatrix}8&-4&4\\-4&2&-2\end{pmatrix}
++\begin{pmatrix}-1&-2&1\\3&6&-3\end{pmatrix}\\
+&=\begin{pmatrix}7&-6&5\\-1&8&-5\end{pmatrix}.
+\end{aligned}
+$$
+
+For the bias,
+
+$$
+\nabla_b L=g^{(1)}+g^{(2)}
+=\begin{pmatrix}4-1\\-2+3\end{pmatrix}
+=\begin{pmatrix}3\\1\end{pmatrix}.
+$$
+
+Both incoming vectors are derivatives of the same chosen loss. Use them directly; any scaling from that loss's definition is already included in those derivatives.
+:::
+
+## Arrange the affine layer as a batch
+
+Put $B$ examples into the rows of $X$. To preserve the same computation, define $W=A^\top$ and transpose the single-example equation:
+
+$$
+(z^{(r)})^\top=(x^{(r)})^\top W+b^\top.
+$$
+
+Keep the original bias $b$ as a column. Let $\mathbf1_B$ be the $B\times1$ column of ones. Stacking the output rows gives
+
+$$
+\boxed{Z=XW+\mathbf1_Bb^\top.}
+$$
+
+| Quantity | Shape | Meaning |
+|---|---|---|
+| $X$ | $B\times n$ | Each row is an input transposed |
+| $W=A^\top$ | $n\times m$ | Weights arranged for row inputs |
+| $b$ | $m\times1$ | Shared bias column |
+| $Z$ | $B\times m$ | Each row is an output transposed |
+| $G=\nabla_Z L$ | $B\times m$ | $G_{ri}=\partial L/\partial Z_{ri}$ |
+
+The product $\mathbf1_Bb^\top$ repeats the same bias row for every example. This is **bias broadcasting**, often abbreviated as $Z=XW+b$ when the repetition is implicit. The explicit expression fixes the orientation of the column bias used here.
+
+### Derive the backward rules component by component
+
+Start from
+
+$$
+Z_{ri}=\sum_{j=1}^{n}X_{rj}W_{ji}+b_i.
+$$
+
+The indices have distinct roles: $r$ selects an example, $j$ an input coordinate, and $i$ an output coordinate.
+
+**Weights.** A fixed weight $W_{ji}$ appears in output coordinate $i$ of every example. Its local derivative in row $r$ is $X_{rj}$, so
+
+$$
+\frac{\partial L}{\partial W_{ji}}
+=\sum_{r=1}^{B}G_{ri}X_{rj}
+=(X^\top G)_{ji}.
+$$
+
+**Inputs.** A fixed input entry $X_{rj}$ affects every output coordinate in its own example row. The local derivative for output $i$ is $W_{ji}$:
+
+$$
+\frac{\partial L}{\partial X_{rj}}
+=\sum_{i=1}^{m}G_{ri}W_{ji}
+=(GW^\top)_{rj}.
+$$
+
+**Bias.** A fixed $b_i$ appears in column $i$ of every example row, each time with local derivative one:
+
+$$
+\frac{\partial L}{\partial b_i}
+=\sum_{r=1}^{B}G_{ri}
+=(G^\top\mathbf1_B)_i.
+$$
+
+Collecting these results gives
+
+$$
+\boxed{\nabla_W L=X^\top G,\qquad
+\nabla_X L=GW^\top,\qquad
+\nabla_b L=G^\top\mathbf1_B.}
+$$
+
+Each gradient has the shape of its corresponding variable:
+
+| Gradient | Product dimensions | Result |
+|---|---|---|
+| $\nabla_W L$ | $(n\times B)(B\times m)$ | $n\times m$ |
+| $\nabla_X L$ | $(B\times m)(m\times n)$ | $B\times n$ |
+| $\nabla_b L$ | $(m\times B)(B\times1)$ | $m\times1$ |
+
+The component sums explain the transposes: each matrix product must collect contributions over the indicated index. The bias calculation sums **down each output column**, collecting the uses of one shared bias coordinate across the batch.
+
+### Exercise 5: the batched affine backward pass
+
+Use the same two examples in row form:
+
+$$
+X=\begin{pmatrix}2&-1&1\\1&2&-1\end{pmatrix},
+\qquad
+W=\begin{pmatrix}1&0\\2&3\\-1&1\end{pmatrix},
+\qquad
+G=\begin{pmatrix}4&-2\\-1&3\end{pmatrix}.
+$$
+
+1. Derive all three backward rules from the component expression and identify their summation indices.
+2. Express the results as matrix operations and check their general dimensions.
+3. Calculate all three gradients. Compare the weight and bias results with exercise 4.
+4. For $B=3$ and $m=2$, describe the output change $\Delta Z$ when only $b_2$ increases by $h$, holding inputs and weights fixed.
+
+::: {.callout-note collapse="true" title="Worked solution: batched products and the bias column sum"}
+For the weights,
+
+$$
+\begin{aligned}
+\nabla_W L
+&=\begin{pmatrix}2&1\\-1&2\\1&-1\end{pmatrix}
+\begin{pmatrix}4&-2\\-1&3\end{pmatrix}\\
+&=\begin{pmatrix}7&-1\\-6&8\\5&-5\end{pmatrix}
+=(\nabla_A L)^\top.
+\end{aligned}
+$$
+
+For the inputs,
+
+$$
+\begin{aligned}
+\nabla_X L
+&=\begin{pmatrix}4&-2\\-1&3\end{pmatrix}
+\begin{pmatrix}1&2&-1\\0&3&1\end{pmatrix}\\
+&=\begin{pmatrix}4&2&-6\\-1&7&4\end{pmatrix}.
+\end{aligned}
+$$
+
+The first row agrees with the single-example input gradient from exercise 3.
+
+For the bias, keep the established column convention:
+
+$$
+\nabla_b L
+=\begin{pmatrix}4&-1\\-2&3\end{pmatrix}
+\begin{pmatrix}1\\1\end{pmatrix}
+=\begin{pmatrix}3\\1\end{pmatrix}.
+$$
+
+Equivalently, $\mathbf1_B^\top G=(3\;1)$ is the transpose of that bias gradient.
+
+For three examples and two outputs, changing only $b_2$ by $h$ changes the entries $Z_{12},Z_{22},Z_{32}$:
+
+$$
+\Delta Z=\begin{pmatrix}0&h\\0&h\\0&h\end{pmatrix}.
+$$
+
+The output-coordinate index stays fixed at $i=2$ while the example index runs through all three rows. In the backward direction, those same uses of the shared bias contribute to one derivative, $\partial L/\partial b_2=\sum_{r=1}^{B}G_{r2}$.
+:::
+
+### Inspect the bias replication
+
+Change one bias coordinate in the figure. Its forward change appears in that output column for every example. Inputs and weights remain fixed.
+
+```{=html}
+<iframe class="interactive-frame" data-auto-height="true" title="Interactive bias broadcasting across three examples" src="../assets/bias-broadcast.html" loading="lazy"></iframe>
+```
+
+<p class="interactive-caption">Three examples, two output coordinates. <a href="../assets/bias-broadcast.html" target="_blank" rel="noopener">Open the interactive figure separately.</a></p>
+
+## Recorded checkpoint
+
+The five exercises connect the scalar chain rule to Jacobian products, matrix-weight gradients, shared-parameter accumulation, and a batched affine backward pass. The affine rules are justified by component sums and dimensions, and their numerical results agree with the earlier single-example calculations.
+
+This is the current stopping point in unit 4. No network implementation or training run is part of this chapter's recorded work so far.

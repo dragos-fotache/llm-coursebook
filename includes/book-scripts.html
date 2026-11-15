@@ -11,7 +11,8 @@
         const body = frame.contentDocument?.body;
         if (!body) return;
         const fitContent = () => {
-          frame.style.height = Math.ceil(body.getBoundingClientRect().height) + "px";
+          const borderHeight = frame.offsetHeight - frame.clientHeight;
+          frame.style.height = Math.ceil(body.getBoundingClientRect().height + borderHeight) + "px";
         };
         observer = new ResizeObserver(fitContent);
         observer.observe(body);

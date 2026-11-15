@@ -2,7 +2,7 @@
 
 This book follows a long-term project to understand modern language models through mathematics, implementation, experiments, and research. Its destination is practical: read a model's paper and source code, trace its computations, derive its central equations, and implement a smaller version.
 
-The chapters grow out of completed learning units. Each brings together the explanation, exercises, worked solutions, and the reasoning developed while doing them.
+The chapters grow out of the learning sessions. Each brings together the explanation, exercises, worked solutions, and the reasoning developed while doing them. A chapter may be recorded in parts while its unit is still in progress.
 
 ::: {.callout-note title="Start here"}
 [Unit 1: Derivatives as predictions of local change](units/01-local-change.qmd) is complete. It develops scalar derivatives, gradients, directional derivatives, and a first gradient-descent update.
@@ -11,7 +11,7 @@ The chapters grow out of completed learning units. Each brings together the expl
 
 [Unit 3: Scalar automatic differentiation](units/03-scalar-autodiff.qmd) is complete. It implements local backward rules, handles shared values, and assembles an automatic reverse traversal in Python.
 
-Next come vector and matrix derivatives: gradients, Jacobians, and vector–Jacobian products.
+[Unit 4: Vector and matrix derivatives](units/04-vector-matrix-derivatives.qmd) is in progress. The recorded material covers exercises 1–5: Jacobians, vector–Jacobian products, matrix-weight gradients, shared parameters, and the batched affine backward pass.
 :::
 
 ## Reading this book

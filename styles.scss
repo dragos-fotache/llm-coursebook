@@ -47,6 +47,11 @@ main.content h2 {
 .callout-body p:last-child {
   margin-bottom: 0.4rem;
 }
+main.content .math.display {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
 @media (max-width: 600px) {
   main.content {
     line-height: 1.7;

@@ -9,14 +9,16 @@ The chapters grow out of completed learning units. Each brings together the expl
 
 [Unit 2: Computational graphs and the multivariable chain rule](units/02-computational-graphs.qmd) is complete. It organizes calculations into graphs, follows derivatives through shared values, and derives a nonlinear neuron's backward pass.
 
-Next comes scalar automatic differentiation: implementing the procedure in Python.
+[Unit 3: Scalar automatic differentiation](units/03-scalar-autodiff.qmd) is complete. It implements local backward rules, handles shared values, and assembles an automatic reverse traversal in Python.
+
+Next come vector and matrix derivatives: gradients, Jacobians, and vector–Jacobian products.
 :::
 
 ## Reading this book
 
 The website includes interactive figures and expandable solutions. Try an exercise before opening its solution; then compare the reasoning, not just the final number.
 
-The [printable PDF](understanding-modern-llms.pdf) contains the same lessons and worked solutions. Its figures are static. Use the website when you want to change a parameter and inspect what happens.
+The coursebook is currently published as a website. Interactive figures let you change parameters or step through a backward pass, and code examples can be copied for local experiments.
 
 ## The route ahead
 

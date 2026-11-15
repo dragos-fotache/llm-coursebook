@@ -24,8 +24,10 @@ jobs:
       - uses: quarto-dev/quarto-actions/setup@v2
         with:
           version: 1.11.9
-      - name: Render HTML and PDF
-        run: quarto render --to all
+      - name: Render website
+        run: |
+          quarto render --to html
+          test ! -e _book/understanding-modern-llms.pdf
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

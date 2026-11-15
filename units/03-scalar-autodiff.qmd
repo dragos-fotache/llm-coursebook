@@ -1,0 +1,512 @@
+# Scalar automatic differentiation
+
+<p class="chapter-kicker">Milestone 1 · Unit 3 · Completed 15 November 2026</p>
+
+In unit 2, we differentiated computational graphs by hand: multiply local derivatives along a path, add contributions from different paths, and propagate backward only when those contributions are ready. Now we turn that procedure into a program.
+
+> What must each operation remember so that a single backward traversal can calculate the gradient of the final output?
+
+We will build a small scalar **reverse-mode automatic differentiation** engine in Python. It supports addition, multiplication, and `tanh`. Each operation records its inputs and a local backward rule; the traversal supplies the order in which those rules run.
+
+## A node holds a value and a sensitivity
+
+For a chosen scalar output $L$, write
+
+$$
+\bar z=\frac{\partial L}{\partial z}
+$$
+
+for the accumulated sensitivity of the final output to a node $z$. This is the quantity stored in `z.grad`. Its local interpretation is $\Delta L\approx\bar z\,\Delta z$ when perturbing that node and following its downstream computation.
+
+The forward value and the gradient answer different questions:
+
+| Field | Meaning |
+|---|---|
+| `data` | The numerical value produced during the forward computation |
+| `grad` | Accumulated derivative of the chosen final output with respect to this node |
+| `parents` | The input node objects used by the operation |
+| `_backward` | A function that adds this operation's contributions to its input gradients |
+
+Begin with this constructor:
+
+```python
+class Value:
+    def __init__(self, data, parents=()):
+        self.data = float(data)
+        self.grad = 0.0
+        self.parents = tuple(parents)
+        self._backward = lambda: None
+```
+
+A leaf node has no operation to differentiate, so its initial backward function does nothing. Operation nodes will replace that function with their own rule. The `parents` tuple retains input **objects**, including repeated references when one value occupies two input positions.
+
+At the start of a backward calculation, the chosen output receives a seed of one:
+
+$$
+\bar L=\frac{\partial L}{\partial L}=1.
+$$
+
+This seed says nothing about the numerical value of the loss. It follows from differentiating a quantity with respect to itself.
+
+## Local rules become deferred functions
+
+If an operation computes $c=f(a,b)$, its contributions are
+
+$$
+\bar a\mathrel{+}=\bar c\frac{\partial f}{\partial a},
+\qquad
+\bar b\mathrel{+}=\bar c\frac{\partial f}{\partial b}.
+$$
+
+Here $\mathrel{+}=$ means **add this contribution to what is already stored**. Another operation may also use the same input. Replacing its gradient would discard those other contributions.
+
+The local derivatives for our three operations are:
+
+| Operation | Input-local derivatives |
+|---|---|
+| $c=a+b$ | $\partial c/\partial a=1$, $\partial c/\partial b=1$ |
+| $c=ab$ | $\partial c/\partial a=b$, $\partial c/\partial b=a$ |
+| $p=\tanh z$ | $dp/dz=1-p^2$ |
+
+### Exercise 1: implement addition
+
+Implement `Value.__add__` for two `Value` operands. The expression `c = a + b` calls `a.__add__(b)`.
+
+Create an output node, retain both operands, and define a nested function that reads the output's current gradient and adds the two contributions. Store the function for later use.
+
+Predict and check:
+
+```python
+a = Value(2)
+b = Value(-3)
+c = a + b
+
+# A supplied derivative from an omitted downstream computation:
+c.grad = 4.0
+c._backward()
+print(c.data, a.grad, b.grad)
+
+x = Value(3)
+s = x + x
+s.grad = 1.0
+s._backward()
+print(x.grad)
+```
+
+::: {.callout-note collapse="true" title="Worked solution: addition"}
+Both local derivatives are one, so each input position receives the output gradient:
+
+```python
+def __add__(self, other):
+    output = Value(self.data + other.data, (self, other))
+
+    def contribute():
+        self.grad += output.grad
+        other.grad += output.grad
+
+    output._backward = contribute
+    return output
+```
+
+The first check prints `-1.0 4.0 4.0`. The second prints `2.0`: both input positions reference `x`, so both updates reach `x.grad`. This agrees with $d(x+x)/dx=2$.
+
+The nested function is a **closure**: it retains references to `self`, `other`, and `output`. Creating the addition stores the rule. Calling `output._backward()` later executes it, reading the gradient available at that time. In particular, it does not capture the initial zero gradient as a fixed number.
+:::
+
+### Exercise 2: implement multiplication
+
+For $c=ab$, derive the local derivatives and implement `Value.__mul__` using the same structure. Predict and check:
+
+1. With `a = Value(2)` and `b = Value(-3)`, form `c = a * b`, supply `c.grad = 4.0`, and call its local backward function.
+2. With a fresh `x = Value(3)`, form `q = x * x`, seed `q.grad = 1.0`, and call its local backward function.
+
+::: {.callout-note collapse="true" title="Worked solution: multiplication"}
+Each input is multiplied by the other input's value:
+
+$$
+\bar a\mathrel{+}=\bar c\,b,
+\qquad
+\bar b\mathrel{+}=\bar c\,a.
+$$
+
+```python
+def __mul__(self, other):
+    output = Value(self.data * other.data, (self, other))
+
+    def contribute():
+        self.grad += output.grad * other.data
+        other.grad += output.grad * self.data
+
+    output._backward = contribute
+    return output
+```
+
+The distinct-operand example gives
+
+$$
+c=-6,\qquad \bar a=4(-3)=-12,\qquad \bar b=4(2)=8.
+$$
+
+For `q = x * x`, the two input-slot contributions add:
+
+$$
+\bar x=1\cdot x+1\cdot x=2x=6.
+$$
+
+The backward function belongs to the multiplication result. It runs once, while its two updates both reach the same input object.
+:::
+
+## A shared graph determines the backward order
+
+Combine the operations:
+
+```python
+a = Value(2)
+b = Value(-3)
+u = a * b
+v = u + a
+L = u * v
+```
+
+The node `u` feeds both `v` and `L`; the node `a` feeds both `u` and `v`. Before a node's backward function runs, all operations that use it downstream must have contributed to its gradient.
+
+### Exercise 3: schedule the callbacks by hand
+
+Calculate the forward values. Seed `L.grad = 1.0`, choose an order for the three operation callbacks, and calculate the gradients of `u`, `v`, `a`, and `b`. Check the parameter derivatives independently by expressing $L$ directly in terms of $a,b$.
+
+::: {.callout-note collapse="true" title="Worked solution: shared graph and accumulation"}
+The forward values are
+
+$$
+u=-6,\qquad v=-4,\qquad L=24.
+$$
+
+The callback order is `L`, then `v`, then `u`:
+
+```python
+L.grad = 1.0
+L._backward()
+v._backward()
+u._backward()
+```
+
+To distinguish local partials from accumulated sensitivities, name the final multiplication $F(u,v)=uv$. Its local derivative $\partial F/\partial u=v$ holds $v$ fixed. The accumulated sensitivity $\bar u$ also includes the path through $v=u+a$:
+
+$$
+\bar v=\frac{\partial F}{\partial v}=u=-6,
+$$
+
+$$
+\bar u
+=\frac{\partial F}{\partial u}
++\frac{\partial F}{\partial v}\frac{\partial v}{\partial u}
+=v+u\cdot1=-4-6=-10.
+$$
+
+Propagating to the parameters gives
+
+$$
+\bar a=\bar u\,b+\bar v\cdot1=30-6=24,
+\qquad
+\bar b=\bar u\,a=-20.
+$$
+
+The actual state changes are:
+
+| Callback | $\bar u$ | $\bar v$ | $\bar a$ | $\bar b$ |
+|---|---:|---:|---:|---:|
+| `L` | $-4$ | $-6$ | $0$ | $0$ |
+| `v` | $-10$ | $-6$ | $-6$ | $0$ |
+| `u` | $-10$ | $-6$ | $24$ | $-20$ |
+
+If `u` runs immediately after `L`, it propagates the incomplete gradient $-4$. The later contribution from `v` arrives after it has already propagated, leaving incorrect parameter gradients.
+
+For the independent algebraic check,
+
+$$
+L=ab(ab+a)=a^2b^2+a^2b,
+$$
+
+$$
+\frac{\partial L}{\partial a}=2ab^2+2ab=24,
+\qquad
+\frac{\partial L}{\partial b}=2a^2b+a^2=-20.
+$$
+:::
+
+### Step through the shared graph
+
+Advance one callback at a time. Compare the valid order with the order that propagates `u` before its gradient is complete.
+
+<iframe class="interactive-frame" data-auto-height="true" src="../assets/backward-trace.html" title="Interactive backward trace of a shared computational graph" loading="lazy"></iframe>
+
+<p class="interactive-caption">All forward values stay fixed. Each step changes only the accumulated gradients. <a href="../assets/backward-trace.html" target="_blank" rel="noopener">Open the trace in its own tab</a>.</p>
+
+## Automate the order with a graph traversal
+
+A **topological ordering** places every input before each operation using it. A backward traversal uses the reverse of that ordering, so consumers run before their inputs.
+
+Depth-first **postorder** constructs a suitable forward ordering: visit a node's parents, then append the node itself. Shared values must appear once in this ordering.
+
+### Exercise 4: implement backward
+
+Implement `Value.backward()` so the shared graph needs only `L.backward()`. Collect distinct reachable nodes in topological order, reset their gradients, seed the chosen output with one, and invoke callbacks in reverse order.
+
+For this engine, each call recomputes the reachable gradients from zero. Check the shared graph, `x + x`, `x * x`, and a second call on an unchanged graph.
+
+::: {.callout-note collapse="true" title="Worked solution: automatic traversal"}
+An insertion-ordered dictionary can hold both the completed-node membership information and the ordering:
+
+```python
+def _collect(self, nodes):
+    if self in nodes:
+        return
+    for parent in self.parents:
+        parent._collect(nodes)
+    nodes[self] = None
+
+def backward(self):
+    nodes = {}
+    self._collect(nodes)
+    for node in nodes:
+        node.grad = 0.0
+    self.grad = 1.0
+    for node in reversed(list(nodes)):
+        node._backward()
+```
+
+For the shared graph, one possible collection order is `a, b, u, v, L`. Its reverse runs `L, v, u, b, a`. The leaf callbacks do nothing.
+
+The graph is acyclic: a newly created operation depends on values that already exist. In this depth-first traversal, a repeated encounter with a shared node finds it already collected. The dictionary ensures each distinct node is appended once. A separate visited set plus a list is another way to implement the same ordering.
+
+Deduplication applies to **nodes in the traversal**, while local rules still account for **every input position**. For `x * x`, the multiplication callback runs once and adds two contributions to `x.grad`.
+
+The reset occurs before any callback executes. Resetting a gradient during propagation could erase contributions already received. With the reset behavior defined here, a second `L.backward()` on an unchanged graph reproduces the same gradients.
+:::
+
+### Traverse the graph rather than every path
+
+Consider repeatedly doubling a shared value:
+
+```python
+x = Value(2)
+r = x
+for _ in range(12):
+    r = r + r
+r.backward()
+print(r.grad, x.grad)
+```
+
+The output is `1.0 4096.0`. The final output's gradient is the seed; the original input's gradient is $2^{12}$.
+
+There are only thirteen distinct nodes. Recursively expanding every input path without remembering completed nodes would make $2^{13}-1=8191$ collection calls. With membership checks, the collector expands thirteen nodes, checks the twenty-four input-slot edges, and runs thirteen callbacks. The helper is entered twenty-five times, including quick returns for repeated encounters.
+
+For $V$ nodes and $E$ input-slot edges, collection and backward propagation take $O(V+E)$ work for these bounded-size scalar operations. The retained graph and ordering require $O(V+E)$ storage. Shared subgraphs do not require repeated backward execution.
+
+## Add a nonlinear activation
+
+Unit 2 derived
+
+$$
+p=\tanh z,\qquad \frac{dp}{dz}=1-p^2.
+$$
+
+This rule can reuse the activation value from the forward pass. The traversal needs no new scheduling logic for a unary operation.
+
+### Exercise 5: implement tanh and reproduce the neuron
+
+Implement `Value.tanh()` with one parent and a deferred accumulating callback. Then reproduce the neuron with $x=2$, $y=0$, $w=1/2$, and $b=0$:
+
+```python
+w = Value(0.5)
+x = Value(2)
+b = Value(0)
+z = w * x + b
+p = z.tanh()
+L = p * p
+L.backward()
+print(p.data, L.data, z.grad, w.grad, b.grad)
+```
+
+Predict the five values and derive the three requested gradients before running the code.
+
+::: {.callout-note collapse="true" title="Worked solution: tanh and the neuron"}
+Cache the activation output and use it in the local rule:
+
+```python
+def tanh(self):
+    activation = math.tanh(self.data)
+    output = Value(activation, (self,))
+
+    def contribute():
+        self.grad += output.grad * (1 - activation**2)
+
+    output._backward = contribute
+    return output
+```
+
+With target zero, the signed error is $e=p$, while the loss is $L=p^2$. The square supplies a factor of $2p$:
+
+$$
+\frac{\partial L}{\partial z}
+=\frac{\partial L}{\partial p}\frac{dp}{dz}
+=2p(1-p^2),
+$$
+
+$$
+\frac{\partial L}{\partial w}
+=\frac{\partial L}{\partial z}\,x,
+\qquad
+\frac{\partial L}{\partial b}
+=\frac{\partial L}{\partial z}.
+$$
+
+The resulting values are:
+
+| Quantity | Value |
+|---|---:|
+| $z$ | $1$ |
+| $p=\tanh z$ | $0.761594155956$ |
+| $L=p^2$ | $0.580025658386$ |
+| $\partial L/\partial z$ | $0.639700008449$ |
+| $\partial L/\partial w$ | $1.279400016898$ |
+| $\partial L/\partial b$ | $0.639700008449$ |
+
+The engine also calculates an input gradient because `x` is a `Value`. Treating $x$ as fixed means we do not update it when optimizing the parameters; it does not prevent calculating its sensitivity.
+:::
+
+## Complete scalar engine
+
+The following standalone implementation assembles the local rules and traversal. Download [scalar_autodiff.py](../assets/scalar_autodiff.py); it requires only Python's standard library. Save it beside an example script and use `from scalar_autodiff import Value` to import the class.
+
+::: {.callout-note collapse="true" title="Complete implementation"}
+```python
+"""A small scalar reverse-mode differentiation engine.
+
+Supports addition and multiplication of Value objects, tanh, and a backward
+pass that resets the gradients of all nodes reachable from the chosen output.
+Keep data fixed between building a graph and running its backward pass.
+"""
+
+import math
+
+
+class Value:
+    def __init__(self, data, parents=()):
+        self.data = float(data)
+        self.grad = 0.0
+        self.parents = tuple(parents)
+        self._backward = lambda: None
+
+    def __add__(self, other):
+        output = Value(self.data + other.data, (self, other))
+
+        def contribute():
+            self.grad += output.grad
+            other.grad += output.grad
+
+        output._backward = contribute
+        return output
+
+    def __mul__(self, other):
+        output = Value(self.data * other.data, (self, other))
+
+        def contribute():
+            self.grad += output.grad * other.data
+            other.grad += output.grad * self.data
+
+        output._backward = contribute
+        return output
+
+    def tanh(self):
+        activation = math.tanh(self.data)
+        output = Value(activation, (self,))
+
+        def contribute():
+            self.grad += output.grad * (1 - activation**2)
+
+        output._backward = contribute
+        return output
+
+    def _collect(self, nodes):
+        if self in nodes:
+            return
+        for parent in self.parents:
+            parent._collect(nodes)
+        nodes[self] = None
+
+    def backward(self):
+        nodes = {}
+        self._collect(nodes)
+        for node in nodes:
+            node.grad = 0.0
+        self.grad = 1.0
+        for node in reversed(list(nodes)):
+            node._backward()
+
+    def __repr__(self):
+        return f"Value(data={self.data}, grad={self.grad})"
+```
+:::
+
+Every operand of addition and multiplication in this implementation is a `Value`. Mixed expressions such as `value + 2` would require additional operator handling. Keep node data fixed between the forward and backward passes; after changing parameters, build a fresh graph for the new computation. Each call to `backward()` resets gradients only on nodes reachable from its chosen output.
+
+This engine calculates derivatives. Updating weights is a separate operation, as in the gradient-descent update from unit 1.
+
+## Automatic, symbolic, and numerical differentiation
+
+The three methods organize different work:
+
+| Method | What it produces or evaluates |
+|---|---|
+| Symbolic differentiation | A derivative expression, such as $3w^2$ for $w^3$ |
+| Automatic differentiation | Numerical derivative values at the current point, using local derivative rules and the chain rule |
+| Finite differences | Derivative estimates from function evaluations at perturbed inputs |
+
+AD need not construct or simplify a global derivative expression. It follows the actual forward computation and evaluates the corresponding local backward rules. For our smooth operations, these rules describe the mathematical derivative; their floating-point evaluation can still introduce numerical error.
+
+### Why the centered quotient converges
+
+Take a positive step $h$, hold $b$ fixed, and write $f(w)=L(w,b)$. The centered difference is
+
+$$
+\frac{f(w+h)-f(w-h)}{2h}
+=\frac12\left(
+\frac{f(w+h)-f(w)}{h}
++\frac{f(w)-f(w-h)}{h}
+\right).
+$$
+
+If the ordinary derivative exists, both quotients on the right tend to $f'(w)$ as $h\to0$. Their average does too. The denominator $2h$ is the distance between the sampled inputs $w-h$ and $w+h$.
+
+For a finite nonzero step, this is generally a secant-slope approximation to the tangent's slope. The limiting definition does not require such an approximation to be used by a differentiation algorithm.
+
+### Finite-step error and roundoff are distinct
+
+For $f(w)=w^3$ at $w=1$, the derivative is $3$, whereas
+
+$$
+\begin{aligned}
+\frac{(1+h)^3-(1-h)^3}{2h}
+&=\frac{6h+2h^3}{2h}\\
+&=3+h^2.
+\end{aligned}
+$$
+
+At $h=0.1$, the estimate is $3.01$; at $h=0.01$, it is $3.0001$. These discrepancies remain with exact rational arithmetic. They arise from the finite step, not from floating-point representation.
+
+AD applies the derivative rules and obtains $3$ in exact arithmetic. Both methods can have floating-point evaluation error on a computer, while finite differences generally also have a step-size approximation. Making $h$ extremely small can amplify roundoff when nearly equal function values are subtracted. We will study that tradeoff experimentally when checking network gradients.
+
+### Why one reverse traversal obtains the full gradient
+
+For one scalar loss depending on 1,000 parameters, one backward traversal can obtain all 1,000 partial derivatives after the forward computation. Each node holds its accumulated final-loss sensitivity and distributes it to all its inputs. Branching changes how many contributions must accumulate, not how many complete backward traversals are required.
+
+The cost still grows with the graph: "one traversal" is not constant work independent of model size. The gain is that reverse mode reuses downstream sensitivity information rather than repeating the full calculation separately for each parameter. Estimating every partial independently with centered finite differences would normally require two full function evaluations per parameter.
+
+## Unit checkpoint
+
+You should now be able to implement and explain scalar local backward rules, accumulate repeated-input contributions, choose a valid backward order, and automate that order without repeatedly expanding shared subgraphs. You should also be able to distinguish derivative values obtained by AD from finite-difference estimates and explain why one reverse traversal is useful for a scalar loss with many parameters.
+
+The next unit moves to vectors and matrices: gradients, Jacobians, vector–Jacobian products, and the backward rules for batched affine layers.
+
+For framework-oriented examples to revisit later, see the [automatic differentiation references](../reference.qmd#automatic-differentiation).

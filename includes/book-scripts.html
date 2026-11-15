@@ -4,6 +4,23 @@
     frame.style.height = Math.ceil(frame.clientWidth * 2 / 3 + 220) + "px";
   };
   document.querySelectorAll("iframe.interactive-frame").forEach(frame => {
+    if (frame.dataset.autoHeight === "true") {
+      let observer;
+      const connect = () => {
+        observer?.disconnect();
+        const body = frame.contentDocument?.body;
+        if (!body) return;
+        const fitContent = () => {
+          frame.style.height = Math.ceil(body.getBoundingClientRect().height) + "px";
+        };
+        observer = new ResizeObserver(fitContent);
+        observer.observe(body);
+        fitContent();
+      };
+      frame.addEventListener("load", connect);
+      if (frame.contentDocument?.readyState === "complete") connect();
+      return;
+    }
     fit(frame);
     new ResizeObserver(() => fit(frame)).observe(frame);
   });

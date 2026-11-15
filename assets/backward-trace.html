@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Backward traversal of a shared graph</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #fff; --ink: #203244; --muted: #526778; --line: #ccd8df; --panel: #f2f7fa; --blue: #216b9c; --green: #1e7650; --green-bg: #e8f5ee; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #19232d; --ink: #edf3f7; --muted: #b5c5d1; --line: #526573; --panel: #243440; --blue: #8bc9f0; --green: #8bdfb2; --green-bg: #244638; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 18px; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, sans-serif; }
+    h1 { margin: 0 0 5px; font-size: 1.2rem; }
+    p { margin: 0 0 12px; }
+    .intro, .legend, .hint { color: var(--muted); }
+    .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin: 14px 0; }
+    label { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+    select, button { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 11px; }
+    select { max-width: 100%; }
+    button { cursor: pointer; }
+    button:disabled { opacity: .4; cursor: default; }
+    button:focus-visible, select:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+    .next { background: var(--blue); color: var(--bg); border-color: var(--blue); font-weight: 600; }
+    .graph-scroll { overflow-x: auto; margin: 10px 0 4px; }
+    svg { display: block; width: 100%; min-width: 620px; height: auto; }
+    .edge { fill: none; stroke: var(--muted); stroke-width: 2; marker-end: url(#arrow); }
+    .node rect { fill: var(--panel); stroke: var(--line); stroke-width: 2; rx: 10; }
+    .node text { fill: var(--ink); text-anchor: middle; font: 16px system-ui, sans-serif; }
+    .node .name { font-weight: 650; }
+    .node .gradient { font-family: ui-monospace, monospace; font-size: 15px; }
+    .node.active rect { stroke: var(--blue); stroke-width: 4; }
+    .node.receiving rect { fill: var(--green-bg); stroke: var(--green); stroke-width: 3; }
+    .legend { font-size: 13px; }
+    .hint { display: none; font-size: 13px; }
+    .state { border-left: 4px solid var(--blue); padding: 9px 12px; margin: 12px 0; background: var(--panel); }
+    .state strong { display: block; margin-bottom: 3px; }
+    #explanation { margin: 0; }
+    table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+    caption { text-align: left; font-weight: 600; margin-bottom: 6px; }
+    th, td { padding: 6px 9px; border-bottom: 1px solid var(--line); text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    td.changed { color: var(--green); font-weight: 700; }
+    .summary { margin: 12px 0 0; }
+    @media (max-width: 600px) { body { padding: 13px; font-size: 14px; } .hint { display: block; } th, td { padding: 6px; } }
+  </style>
+</head>
+<body>
+  <h1>One graph, two callback orders</h1>
+  <p class="intro">Forward values: u = ab, v = u + a, L = uv, with a = 2 and b = −3.</p>
+  <label for="order">Callback order
+    <select id="order">
+      <option value="valid">L → v → u: all contributions ready</option>
+      <option value="early">L → u → v: u runs too early</option>
+    </select>
+  </label>
+  <div class="controls">
+    <button id="previous" type="button">Previous</button>
+    <button id="next" type="button" class="next">Next callback</button>
+    <button id="reset" type="button">Reset</button>
+  </div>
+  <div class="graph-scroll" tabindex="0" role="region" aria-label="Computational graph; scroll horizontally on narrow screens">
+    <svg viewBox="0 0 800 285" role="img" aria-labelledby="graph-title graph-description">
+      <title id="graph-title">Shared computational graph</title>
+      <desc id="graph-description">a and b feed u. Both a and u feed v. Both u and v feed L. Blue outlines mark the callback being executed; green marks its input nodes.</desc>
+      <defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9" fill="context-stroke"></path></marker></defs>
+      <path class="edge" d="M150 65 L245 140"></path>
+      <path class="edge" d="M150 220 L245 165"></path>
+      <path class="edge" d="M150 45 C265 5 340 5 460 45"></path>
+      <path class="edge" d="M375 140 L460 80"></path>
+      <path class="edge" d="M375 175 C490 235 565 235 650 175"></path>
+      <path class="edge" d="M590 80 L650 140"></path>
+      <g class="node" data-node="a" transform="translate(20 25)"><rect width="130" height="80"></rect><text class="name" x="65" y="23">a = 2</text><text class="gradient" id="grad-a" x="65" y="55">grad = 0</text></g>
+      <g class="node" data-node="b" transform="translate(20 185)"><rect width="130" height="80"></rect><text class="name" x="65" y="23">b = −3</text><text class="gradient" id="grad-b" x="65" y="55">grad = 0</text></g>
+      <g class="node" data-node="u" transform="translate(245 115)"><rect width="130" height="80"></rect><text class="name" x="65" y="23">u = −6</text><text class="gradient" id="grad-u" x="65" y="55">grad = 0</text></g>
+      <g class="node" data-node="v" transform="translate(460 25)"><rect width="130" height="80"></rect><text class="name" x="65" y="23">v = −4</text><text class="gradient" id="grad-v" x="65" y="55">grad = 0</text></g>
+      <g class="node" data-node="L" transform="translate(650 115)"><rect width="130" height="80"></rect><text class="name" x="65" y="23">L = 24</text><text class="gradient" id="grad-L" x="65" y="55">grad = 1</text></g>
+    </svg>
+  </div>
+  <p class="hint">Swipe the graph horizontally to see every node.</p>
+  <p class="legend">Blue outline: current callback. Green outline: inputs receiving contributions.</p>
+  <div class="state" aria-live="polite" aria-atomic="true">
+    <strong id="step-label">Step 0 of 3 · output seeded</strong>
+    <p id="explanation">L.grad = 1; every other gradient starts at zero.</p>
+  </div>
+  <table>
+    <caption>Current node values and gradients</caption>
+    <thead><tr><th scope="col">Node</th><th scope="col">Forward value</th><th scope="col">Gradient</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">a</th><td>2</td><td id="table-a">0</td></tr>
+      <tr><th scope="row">b</th><td>−3</td><td id="table-b">0</td></tr>
+      <tr><th scope="row">u</th><td>−6</td><td id="table-u">0</td></tr>
+      <tr><th scope="row">v</th><td>−4</td><td id="table-v">0</td></tr>
+      <tr><th scope="row">L</th><td>24</td><td id="table-L">1</td></tr>
+    </tbody>
+  </table>
+  <p id="summary" class="summary">Choose Next callback to begin.</p>
+  <noscript><p>JavaScript is required for the stepper. The chapter's worked solution includes the complete numerical trace.</p></noscript>
+  <script>
+    (() => {
+      const orders = { valid: ["L", "v", "u"], early: ["L", "u", "v"] };
+      const parents = { L: ["u", "v"], v: ["u", "a"], u: ["a", "b"] };
+      const names = ["a", "b", "u", "v", "L"];
+      const order = document.getElementById("order");
+      let step = 0;
+      const format = value => String(value).replaceAll("-", "−");
+      function render() {
+        const sequence = orders[order.value];
+        const g = { a: 0, b: 0, u: 0, v: 0, L: 1 };
+        let explanation = "L.grad = 1; every other gradient starts at zero.";
+        for (const node of sequence.slice(0, step)) {
+          if (node === "L") {
+            g.u += g.L * -4;
+            g.v += g.L * -6;
+            explanation = "The multiplication adds −4 to u.grad and −6 to v.grad. u still awaits the contribution through v.";
+          } else if (node === "v") {
+            g.u += g.v;
+            g.a += g.v;
+            explanation = `The addition contributes ${format(g.v)} to both u.grad and a.grad. u.grad is now ${format(g.u)}.`;
+          } else {
+            const contributionA = g.u * -3;
+            const contributionB = g.u * 2;
+            g.a += contributionA;
+            g.b += contributionB;
+            explanation = `Using u.grad = ${format(g.u)}, the multiplication adds ${format(contributionA)} to a.grad and ${format(contributionB)} to b.grad.`;
+          }
+        }
+        const active = step ? sequence[step - 1] : null;
+        const receiving = active ? parents[active] : [];
+        for (const name of names) {
+          document.getElementById(`grad-${name}`).textContent = `grad = ${format(g[name])}`;
+          const cell = document.getElementById(`table-${name}`);
+          cell.textContent = format(g[name]);
+          cell.classList.toggle("changed", receiving.includes(name));
+          const node = document.querySelector(`[data-node="${name}"]`);
+          node.classList.toggle("active", active === name);
+          node.classList.toggle("receiving", receiving.includes(name));
+        }
+        document.getElementById("step-label").textContent = `Step ${step} of 3 · ${active ? `${active} callback` : "output seeded"}`;
+        document.getElementById("explanation").textContent = explanation;
+        document.getElementById("previous").disabled = step === 0;
+        document.getElementById("next").disabled = step === 3;
+        const summary = document.getElementById("summary");
+        if (step < 3) {
+          summary.textContent = `Next callback: ${sequence[step]}.`;
+        } else if (order.value === "valid") {
+          summary.textContent = "Complete: a.grad = 24 and b.grad = −20. Each operation propagated a complete incoming gradient.";
+        } else {
+          summary.textContent = "Incorrect result: a.grad = 6 and b.grad = −8. u.grad eventually reached −10, but u had already propagated the incomplete value −4.";
+        }
+      }
+      document.getElementById("next").addEventListener("click", () => { step = Math.min(3, step + 1); render(); });
+      document.getElementById("previous").addEventListener("click", () => { step = Math.max(0, step - 1); render(); });
+      document.getElementById("reset").addEventListener("click", () => { step = 0; render(); });
+      order.addEventListener("change", () => { step = 0; render(); });
+      render();
+    })();
+  </script>
+</body>
+</html>

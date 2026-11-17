@@ -1,13 +1,15 @@
 # Vector and matrix derivatives
 
-<p class="chapter-kicker">Milestone 1 · Unit 4 · In progress · Recorded through exercise 5 on 15 November 2026</p>
+<p class="chapter-kicker">Milestone 1 · Unit 4 · In progress · Recorded through exercise 6 on 17 November 2026</p>
 
 The scalar engine in unit 3 propagated derivatives by multiplying local rates and accumulating contributions from shared paths. The same reasoning applies when an operation consumes and produces entire vectors or matrices.
 
 > How do we organize those local derivatives, and how do the resulting shapes determine a backward calculation?
 
 ::: {.callout-note title="Scope of this chapter"}
-This chapter records the material covered so far in unit 4: Jacobians as local linear maps, the scalar-loss backward rule, matrix-weight gradients, shared parameters, and the batched affine layer. It includes the five completed exercises and their worked solutions. Unit 4 is still in progress.
+This chapter records the material covered so far in unit 4: Jacobians as local linear maps, the scalar-loss backward rule, matrix-weight gradients, shared parameters, the batched affine layer, and elementwise activations. It includes six exercises and their worked solutions. The activation section follows one entry first, then develops the matrix notation and the equivalent diagonal-Jacobian calculation.
+
+Unit 4 is still in progress. Sum and mean reductions and the final unit checkpoint remain ahead; they are not introduced here.
 :::
 
 ## A Jacobian predicts local vector changes
@@ -134,7 +136,59 @@ The second Jacobian column is $(1,2)^\top$. A small change $h$ in $x_2$ alone gi
 
 ## A scalar loss propagates backward through a Jacobian
 
-Write $y=f(x)$, with a downstream scalar loss $L(y)$. For each input coordinate, the chain rule adds the paths through all outputs:
+The forward computation has three stages:
+
+$$
+\underbrace{x}_{n\times1}
+\xrightarrow{\ f\ }
+\underbrace{y}_{m\times1}
+\xrightarrow{\ L\ }
+\underbrace{L(y)}_{\text{scalar}}.
+$$
+
+We want the derivative of the final scalar loss with respect to the inputs of $f$. Writing $\nabla_xL$ is shorthand for the gradient of the composite function $L(f(x))$.
+
+### Separate the local derivatives from the loss derivatives
+
+Suppose the computation downstream of $y$ has already supplied
+
+$$
+g=\nabla_yL
+=\begin{pmatrix}
+\partial L/\partial y_1\\
+\vdots\\
+\partial L/\partial y_m
+\end{pmatrix}.
+$$
+
+This is the **incoming gradient** at the operation $f$ during the backward pass. There may be many more operations between $y$ and the loss; their effects are already summarized in $g$.
+
+There are three different derivatives to keep track of:
+
+| Derivative | Question it answers |
+|---|---|
+| $\partial y_i/\partial x_j$ | How does output $y_i$ of this operation respond to input $x_j$? |
+| $g_i=\partial L/\partial y_i$ | How does the final loss respond to changing $y_i$, holding the other output coordinates fixed? |
+| $\partial L/\partial x_j$ | How does the final loss respond to input $x_j$ through the complete computation? |
+
+The Jacobian contains the first kind. The incoming gradient contains the second. The backward calculation combines them to obtain the third.
+
+### Fix one input and collect its paths
+
+Choose one input coordinate $x_j$. Keep $j$ fixed. Changing it may change several outputs, and each affected output provides a path to the loss:
+
+$$
+x_j\longrightarrow y_i\longrightarrow L.
+$$
+
+Along the path through $y_i$, multiply the two rates:
+
+$$
+\underbrace{\frac{\partial L}{\partial y_i}}_{\text{loss response}}
+\underbrace{\frac{\partial y_i}{\partial x_j}}_{\text{local output response}}.
+$$
+
+Add those contributions over all outputs:
 
 $$
 \frac{\partial L}{\partial x_j}
@@ -142,7 +196,55 @@ $$
 \frac{\partial y_i}{\partial x_j}.
 $$
 
-Column $j$ of $J_f$ contains the local derivatives in this sum. Its dot product with the incoming gradient $\nabla_y L$ gives one input-gradient component. Collecting those components yields
+Here $j$ identifies the particular input derivative being calculated, while $i$ visits the outputs. The different letters distinguish their roles; their numerical values are allowed to coincide.
+
+The sum follows directly from local changes. If only $x_j$ increases by a small amount $h$, then
+
+$$
+\Delta y_i\approx\frac{\partial y_i}{\partial x_j}h.
+$$
+
+The resulting loss change is, to first order,
+
+$$
+\begin{aligned}
+\Delta L
+&\approx\sum_i g_i\Delta y_i\\
+&\approx\left(\sum_i g_i\frac{\partial y_i}{\partial x_j}\right)h.
+\end{aligned}
+$$
+
+The coefficient of $h$ is $\partial L/\partial x_j$. This is the same multiplication along paths and addition across paths used in the scalar engine.
+
+### Why the Jacobian is transposed
+
+Column $j$ of $J_f$ contains all the local derivatives needed for input $x_j$. Its dot product with $g$ gives one input-gradient component. For a two-input, two-output operation, write
+
+$$
+J_f=\begin{pmatrix}a&b\\c&d\end{pmatrix},
+\qquad
+g=\begin{pmatrix}g_1\\g_2\end{pmatrix}.
+$$
+
+The first input derivative uses the first column, $(a,c)^\top$; the second uses $(b,d)^\top$:
+
+$$
+\nabla_xL
+=\begin{pmatrix}
+ag_1+cg_2\\
+bg_1+dg_2
+\end{pmatrix}.
+$$
+
+Matrix–vector multiplication takes dot products with the matrix's rows. Transposing places those Jacobian columns into rows:
+
+$$
+\begin{pmatrix}a&c\\b&d\end{pmatrix}
+\begin{pmatrix}g_1\\g_2\end{pmatrix}
+=\begin{pmatrix}ag_1+cg_2\\bg_1+dg_2\end{pmatrix}.
+$$
+
+Collecting the component chain-rule sums therefore yields
 
 $$
 \boxed{\nabla_x L=J_f(x)^\top\nabla_y L.}
@@ -156,7 +258,31 @@ $$
 \underbrace{\nabla_y L}_{m\times1}.
 $$
 
-Transposing the entire equation gives the equivalent row form,
+### Obtain the same rule from local linear maps
+
+For a general small input displacement, the forward derivative gives
+
+$$
+\Delta y\approx J_f(x)\Delta x.
+$$
+
+The incoming gradient predicts the loss change from that output displacement:
+
+$$
+\begin{aligned}
+\Delta L
+&\approx g^\top\Delta y\\
+&\approx g^\top J_f(x)\Delta x\\
+&=\bigl(J_f(x)^\top g\bigr)^\top\Delta x.
+\end{aligned}
+$$
+
+Compare this with the defining local-change formula
+$\Delta L\approx(\nabla_xL)^\top\Delta x$. The input gradient is the column of coefficients $J_f^\top g$.
+
+The approximation is in predicting a finite change. The chain-rule identity for the derivatives at the chosen point is exact for differentiable operations.
+
+Transposing the backward equation gives the equivalent row form,
 
 $$
 (\nabla_x L)^\top=(\nabla_y L)^\top J_f(x).
@@ -526,8 +652,472 @@ Change one bias coordinate in the figure. Its forward change appears in that out
 
 <p class="interactive-caption">Three examples, two output coordinates. <a href="../assets/bias-broadcast.html" target="_blank" rel="noopener">Open the interactive figure separately.</a></p>
 
+## Backward through an elementwise activation
+
+After an affine layer, apply a nonlinear activation:
+
+$$
+Z=XW+\mathbf1_Bb^\top,
+\qquad
+H=\tanh(Z).
+$$
+
+Both $Z$ and $H$ have shape $B\times m$. Let the downstream scalar loss depend on $H$, possibly through additional operations. The forward and backward directions are
+
+$$
+Z\xrightarrow{\ \tanh\ }H\xrightarrow{\ \text{downstream computation}\ }L,
+$$
+
+$$
+\underbrace{\nabla_ZL}_{\text{gradient we want}}
+\ \longleftarrow\
+\underbrace{\nabla_HL}_{\text{incoming gradient}}.
+$$
+
+We will call the incoming gradient $Q$:
+
+$$
+Q=\nabla_HL,
+\qquad
+Q_{ri}=\frac{\partial L}{\partial H_{ri}}.
+$$
+
+The letters distinguish where a loss derivative is measured. In the affine section, $G$ meant $\nabla_ZL$. Here $Q$ means $\nabla_HL$. The activation backward pass converts $Q$ into $G$, which can then be used in the affine rules already derived.
+
+::: {.callout-note title="Read the calculation in three stages"}
+First follow a single entry through the scalar chain rule. Then collect those entrywise equations into matrix notation. Finally compare that calculation with multiplication by the full Jacobian. Each stage describes the same derivatives with a different organization.
+:::
+
+### What does applying tanh to a matrix mean?
+
+In this chapter, activation functions applied to matrices act **elementwise**. The notation
+
+$$
+H=\tanh(Z)
+$$
+
+is defined by
+
+$$
+H_{ri}=\tanh(Z_{ri})
+\quad\text{for every }r,i.
+$$
+
+For example,
+
+$$
+\tanh\!\begin{pmatrix}a&b\\c&d\end{pmatrix}
+=\begin{pmatrix}
+\tanh(a)&\tanh(b)\\
+\tanh(c)&\tanh(d)
+\end{pmatrix}.
+$$
+
+This convention works for rectangular matrices and preserves their shape. Stating “tanh acts elementwise” makes the notation explicit.
+
+Changing one entry of $Z$ changes the matching entry of $H$:
+
+$$
+Z_{ri}\longrightarrow H_{ri}=\tanh(Z_{ri}).
+$$
+
+Other activation entries use other input entries. This dependency structure is what makes the backward calculation simple.
+
+### Follow one entry first
+
+Fix an example row $r$ and an output coordinate $i$. For the displayed computation, the only path from $Z_{ri}$ into the downstream loss begins through $H_{ri}$. The scalar chain rule therefore gives
+
+$$
+\frac{\partial L}{\partial Z_{ri}}
+=
+\frac{\partial L}{\partial H_{ri}}
+\frac{\partial H_{ri}}{\partial Z_{ri}}.
+$$
+
+Use the scalar derivative
+
+$$
+\frac{d}{dz}\tanh(z)=1-\tanh^2(z).
+$$
+
+The result is
+
+$$
+\frac{\partial L}{\partial Z_{ri}}
+=Q_{ri}\bigl(1-\tanh^2(Z_{ri})\bigr).
+$$
+
+Because the forward pass has already calculated $H_{ri}=\tanh(Z_{ri})$, we can also write
+
+$$
+\boxed{
+\frac{\partial L}{\partial Z_{ri}}
+=Q_{ri}(1-H_{ri}^2).
+}
+$$
+
+The three quantities have distinct meanings:
+
+| Quantity | Meaning |
+|---|---|
+| $Q_{ri}=\partial L/\partial H_{ri}$ | Incoming loss sensitivity at the activation output |
+| $1-H_{ri}^2$ | Local derivative of the activation at that entry |
+| $\partial L/\partial Z_{ri}$ | Resulting loss sensitivity at the activation input |
+
+The left-hand derivative is with respect to $Z_{ri}$ because we have propagated the loss derivative back across the activation. The derivative with respect to $H_{ri}$ is the incoming quantity on the right.
+
+::: {.callout-note collapse="true" title="Recall why the scalar derivative is 1 − tanh²(z)"}
+Write
+
+$$
+a=e^z-e^{-z},
+\qquad
+b=e^z+e^{-z},
+\qquad
+\tanh(z)=\frac{a}{b}.
+$$
+
+Then $a'=b$ and $b'=a$. The quotient rule gives
+
+$$
+\frac{d}{dz}\frac{a}{b}
+=\frac{a'b-ab'}{b^2}
+=\frac{b^2-a^2}{b^2}
+=1-\left(\frac{a}{b}\right)^2
+=1-\tanh^2(z).
+$$
+:::
+
+### Where a sum over other entries would go
+
+The one-term chain rule above is already valid. A general chain-rule sum is useful for making its dependency argument explicit.
+
+When calculating $\partial L/\partial Z_{ri}$, $r$ and $i$ stay fixed: they identify the input entry whose loss derivative we want. To visit all activation outputs, introduce separate running indices $s$ and $j$:
+
+$$
+\frac{\partial L}{\partial Z_{ri}}
+=
+\sum_{s=1}^{B}\sum_{j=1}^{m}
+\frac{\partial L}{\partial H_{sj}}
+\frac{\partial H_{sj}}{\partial Z_{ri}}.
+$$
+
+The index roles are:
+
+| Indices | Role in this calculation |
+|---|---|
+| $r,i$ | The fixed row and coordinate of the selected input $Z_{ri}$ |
+| $s,j$ | Running indices visiting every output entry $H_{sj}$ |
+
+Different letters do not require different values. One of the visited positions has $s=r$ and $j=i$.
+
+For example, fix $Z_{12}$ in a $2\times2$ activation. The general sum visits
+
+$$
+H_{11},\quad H_{12},\quad H_{21},\quad H_{22}.
+$$
+
+Only $H_{12}$ changes when $Z_{12}$ changes. More generally,
+
+$$
+\frac{\partial H_{sj}}{\partial Z_{ri}}
+=
+\begin{cases}
+1-H_{ri}^2,&s=r\text{ and }j=i,\\
+0,&\text{otherwise}.
+\end{cases}
+$$
+
+All but the matching term in the double sum vanish. This recovers exactly the direct one-term rule
+$\partial L/\partial Z_{ri}=Q_{ri}(1-H_{ri}^2)$.
+
+::: {.callout-note title="The loss can still combine different activation entries"}
+Suppose, for example, $L=H_{11}H_{12}$. Then the incoming derivative at $H_{11}$ is $Q_{11}=H_{12}$. Changing $Z_{11}$ changes $H_{11}$, so
+
+$$
+\frac{\partial L}{\partial Z_{11}}
+=H_{12}(1-H_{11}^2).
+$$
+
+The dependence of the loss on $H_{12}$ is already represented in the incoming derivative. There is no additional contribution through a change in $H_{12}$, because $H_{12}=\tanh(Z_{12})$ does not change when only $Z_{11}$ changes.
+
+The local operation determines which intermediate entries a chosen input can affect. The incoming gradients summarize the remaining paths from those entries to the loss.
+:::
+
+### Why an affine input gradient has more terms
+
+Compare the activation with the preceding affine layer:
+
+$$
+Z_{ri}=\sum_{j=1}^{n}X_{rj}W_{ji}+b_i.
+$$
+
+Fix one input entry $X_{rj}$. It contributes to every output coordinate of example row $r$. With two output coordinates, the two paths give
+
+$$
+\frac{\partial L}{\partial X_{rj}}
+=
+\underbrace{G_{r1}W_{j1}}_{\text{through }Z_{r1}}
++
+\underbrace{G_{r2}W_{j2}}_{\text{through }Z_{r2}}.
+$$
+
+For $m$ output coordinates, the result is
+
+$$
+\frac{\partial L}{\partial X_{rj}}
+=\sum_{i=1}^{m}G_{ri}W_{ji}.
+$$
+
+That sum is built into the matrix product $\nabla_XL=GW^\top$. For a concrete check, use exercise 5's supplied $W$ and $G$. The input $X_{12}$ contributes to $Z_{11}$ with weight $W_{21}=2$ and to $Z_{12}$ with weight $W_{22}=3$:
+
+$$
+\frac{\partial L}{\partial X_{12}}
+=G_{11}W_{21}+G_{12}W_{22}
+=4\cdot2+(-2)\cdot3
+=2.
+$$
+
+This agrees with the first row, second entry of the input gradient in that exercise.
+
+| Local operation | Outputs affected by one input entry | Backward calculation |
+|---|---|---|
+| Elementwise activation | One matching activation output | One product |
+| Affine layer, with respect to an input entry | Generally all output coordinates of the same example | Sum of products |
+
+Both use the same chain rule. Their different local dependencies determine how many terms survive.
+
+### Collect the scalar equations into matrix notation
+
+We have one scalar equation at every position:
+
+$$
+(\nabla_ZL)_{ri}=Q_{ri}(1-H_{ri}^2).
+$$
+
+To collect these equations, define the **entrywise product**, also called the **Hadamard product**, by
+
+$$
+(U\odot V)_{ri}=U_{ri}V_{ri},
+$$
+
+for matrices $U,V$ of the same shape. This operation preserves that shape. In particular, $H\odot H$ squares each entry of $H$.
+
+Let $\mathbf1_{B\times m}$ be the $B\times m$ matrix whose every entry is one. For the $2\times2$ example,
+
+$$
+\mathbf1_{2\times2}
+=\begin{pmatrix}1&1\\1&1\end{pmatrix}.
+$$
+
+The matrix rule is therefore
+
+$$
+\boxed{
+\nabla_ZL
+=Q\odot\bigl(\mathbf1_{B\times m}-H\odot H\bigr).
+}
+$$
+
+This is more than removing indices: the notation must preserve the scalar operations at matching positions. Writing $H\odot H$ explicitly identifies an entrywise square; an ordinary matrix product $HH$ would mix coordinates and would require a square $H$.
+
+The dimensions are:
+
+| Quantity | Shape | Entry at $(r,i)$ |
+|---|---|---|
+| $Q$ | $B\times m$ | $Q_{ri}$ |
+| $H\odot H$ | $B\times m$ | $H_{ri}^2$ |
+| $D=\mathbf1_{B\times m}-H\odot H$ | $B\times m$ | $1-H_{ri}^2$ |
+| $\nabla_ZL=Q\odot D$ | $B\times m$ | $Q_{ri}(1-H_{ri}^2)$ |
+
+The table $D$ stores the local activation slopes. The incoming sensitivity and local slope at each position are multiplied to give the loss sensitivity at the corresponding input.
+
+### The full Jacobian is diagonal
+
+To relate this to the general rule $\nabla_zL=J^\top\nabla_hL$, flatten $Z$ and $H$ into vectors in the **same row-by-row order**. For a $2\times2$ matrix, use
+
+$$
+z=\begin{pmatrix}Z_{11}\\Z_{12}\\Z_{21}\\Z_{22}\end{pmatrix},
+\qquad
+h=\begin{pmatrix}H_{11}\\H_{12}\\H_{21}\\H_{22}\end{pmatrix}.
+$$
+
+Rows of the Jacobian correspond to entries of $h$; columns correspond to entries of $z$. Since each activation output depends on its matching input only,
+
+$$
+J=\frac{\partial h}{\partial z}
+=
+\begin{pmatrix}
+D_{11}&0&0&0\\
+0&D_{12}&0&0\\
+0&0&D_{21}&0\\
+0&0&0&D_{22}
+\end{pmatrix}.
+$$
+
+The nonzero local derivatives are on the diagonal. Transposition leaves a diagonal matrix unchanged, so $J^\top=J$.
+
+::: {.callout-note title="The table of slopes and the Jacobian have different shapes"}
+$D$ is a $2\times2$ table with one slope per activation entry. The full Jacobian $J$ is a $4\times4$ matrix with one derivative for every output–input pair.
+
+The four entries of $D$ supply the four diagonal entries of $J$. The remaining twelve Jacobian entries are zero because the corresponding output–input pairs have no dependency.
+:::
+
+### Diagonal multiplication is entrywise scaling
+
+Flatten the incoming gradient in the same order:
+
+$$
+q=\begin{pmatrix}Q_{11}\\Q_{12}\\Q_{21}\\Q_{22}\end{pmatrix}.
+$$
+
+Now write out the general backward product:
+
+$$
+J^\top q
+=
+\begin{pmatrix}
+D_{11}&0&0&0\\
+0&D_{12}&0&0\\
+0&0&D_{21}&0\\
+0&0&0&D_{22}
+\end{pmatrix}
+\begin{pmatrix}Q_{11}\\Q_{12}\\Q_{21}\\Q_{22}\end{pmatrix}
+=
+\begin{pmatrix}
+D_{11}Q_{11}\\
+D_{12}Q_{12}\\
+D_{21}Q_{21}\\
+D_{22}Q_{22}
+\end{pmatrix}.
+$$
+
+Each row has just one contributing term. Multiplying by this diagonal matrix scales each incoming-gradient entry by its matching local slope.
+
+Those are exactly the products in $Q\odot D$. We can calculate them while retaining the original $B\times m$ layout:
+
+$$
+\text{flatten}(Q\odot D)=J^\top\text{flatten}(Q),
+$$
+
+where every flattening uses the same ordering.
+
+This explains why the full Jacobian is unnecessary. The backward result is still the Jacobian–gradient product, but its known structure lets us calculate that product directly from the local slopes. We do not need to store its zero entries or flatten the matrices in the implementation.
+
+For $N=Bm$ activation entries, an explicitly constructed full Jacobian has $N^2$ entries. Its diagonal has only $N$ local slopes. Once the slopes are known, applying the backward product needs just $N$ entrywise multiplications.
+
+### Exercise 6: the elementwise tanh backward pass
+
+Let $H=\tanh(Z)$, where $Z,H\in\mathbb R^{B\times m}$, and let $Q=\nabla_HL$ be the incoming gradient.
+
+1. Derive $\partial L/\partial Z_{ri}$ from the component dependencies and the scalar derivative of tanh. If starting from a sum over all $H_{sj}$, explain which terms survive.
+2. Express $\nabla_ZL$ using $Q,H$, a matrix of ones, and entrywise operations. Check the shapes.
+3. Evaluate the rule for
+
+$$
+H=\begin{pmatrix}0&\tfrac12\\-\tfrac12&\tfrac45\end{pmatrix},
+\qquad
+Q=\begin{pmatrix}2&-4\\3&5\end{pmatrix}.
+$$
+
+4. Describe the full $4\times4$ Jacobian for this example and explain why the backward result can be computed without constructing it.
+
+The forward activation values are supplied. You do not need to recover $Z$ or evaluate hyperbolic functions.
+
+::: {.callout-note collapse="true" title="Worked solution: scalar rule, matrix calculation, and diagonal product"}
+For the selected entry $Z_{ri}$, only $H_{ri}$ changes. The scalar chain rule gives
+
+$$
+\begin{aligned}
+\frac{\partial L}{\partial Z_{ri}}
+&=\frac{\partial L}{\partial H_{ri}}
+\frac{\partial H_{ri}}{\partial Z_{ri}}\\
+&=Q_{ri}\bigl(1-\tanh^2(Z_{ri})\bigr)\\
+&=Q_{ri}(1-H_{ri}^2).
+\end{aligned}
+$$
+
+Collecting all entries,
+
+$$
+\nabla_ZL
+=Q\odot(\mathbf1_{B\times m}-H\odot H).
+$$
+
+Every matrix in the entrywise expression has shape $B\times m$, which is also the shape of $Z$.
+
+For the supplied values, first calculate the entrywise squares:
+
+$$
+H\odot H
+=\begin{pmatrix}
+0^2&(\tfrac12)^2\\
+(-\tfrac12)^2&(\tfrac45)^2
+\end{pmatrix}
+=\begin{pmatrix}
+0&\tfrac14\\
+\tfrac14&\tfrac{16}{25}
+\end{pmatrix}.
+$$
+
+Subtract from the matrix of ones to obtain the local slopes:
+
+$$
+\begin{aligned}
+D
+&=\mathbf1_{2\times2}-H\odot H\\
+&=\begin{pmatrix}1&1\\1&1\end{pmatrix}
+-\begin{pmatrix}0&\tfrac14\\\tfrac14&\tfrac{16}{25}\end{pmatrix}\\
+&=\begin{pmatrix}1&\tfrac34\\\tfrac34&\tfrac9{25}\end{pmatrix}.
+\end{aligned}
+$$
+
+Multiply matching entries of the incoming gradient and local slopes:
+
+$$
+\begin{aligned}
+\nabla_ZL
+&=Q\odot D\\
+&=\begin{pmatrix}
+2\cdot1&(-4)\cdot\tfrac34\\
+3\cdot\tfrac34&5\cdot\tfrac9{25}
+\end{pmatrix}\\
+&=\boxed{\begin{pmatrix}2&-3\\\tfrac94&\tfrac95\end{pmatrix}}.
+\end{aligned}
+$$
+
+For comparison, with row-by-row flattening the full Jacobian and incoming gradient give
+
+$$
+J^\top q
+=
+\begin{pmatrix}
+1&0&0&0\\
+0&\tfrac34&0&0\\
+0&0&\tfrac34&0\\
+0&0&0&\tfrac9{25}
+\end{pmatrix}
+\begin{pmatrix}2\\-4\\3\\5\end{pmatrix}
+=\begin{pmatrix}2\\-3\\\tfrac94\\\tfrac95\end{pmatrix}.
+$$
+
+Reshaping this vector into two rows gives the same gradient matrix. Each row of the diagonal product uses only one local slope and its matching incoming-gradient entry. The entrywise calculation performs exactly those four products without storing the twelve zero entries of $J$.
+:::
+
+### Inspect the same entry in both layouts
+
+Choose an entry in the figure. Its matching positions are highlighted in the $2\times2$ tables and in the flattened Jacobian. Changing a forward activation value changes its local slope; changing an incoming gradient changes the corresponding backward result.
+
+~~~{=html}
+<iframe class="interactive-frame" data-auto-height="true" title="Interactive elementwise activation and equivalent diagonal Jacobian product" src="../assets/activation-backward.html" loading="lazy"></iframe>
+~~~
+
+<p class="interactive-caption">The initial values reproduce exercise 6. The figure runs entirely in your browser. <a href="../assets/activation-backward.html" target="_blank" rel="noopener">Open the interactive figure separately.</a></p>
+
 ## Recorded checkpoint
 
-The five exercises connect the scalar chain rule to Jacobian products, matrix-weight gradients, shared-parameter accumulation, and a batched affine backward pass. The affine rules are justified by component sums and dimensions, and their numerical results agree with the earlier single-example calculations.
+The six exercises connect the scalar chain rule to Jacobian products, matrix-weight gradients, shared-parameter accumulation, the batched affine backward pass, and an elementwise activation.
 
-This is the current stopping point in unit 4. No network implementation or training run is part of this chapter's recorded work so far.
+For an affine layer, matrix multiplication organizes the necessary path sums. For an elementwise activation, each input affects one matching output, so its backward rule scales matching entries. Both are direct evaluations of the same chain rule.
+
+The material recorded here ends after exercise 6. Unit 4 is still in progress: sum and mean reductions, their loss-gradient scaling, and the final unit checkpoint remain ahead. No network implementation or training run is part of this chapter's recorded work so far.

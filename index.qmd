@@ -11,7 +11,7 @@ The chapters grow out of the learning sessions. Each brings together the explana
 
 [Unit 3: Scalar automatic differentiation](units/03-scalar-autodiff.qmd) is complete. It implements local backward rules, handles shared values, and assembles an automatic reverse traversal in Python.
 
-[Unit 4: Vector and matrix derivatives](units/04-vector-matrix-derivatives.qmd) is in progress. The recorded material covers exercises 1–5: Jacobians, vector–Jacobian products, matrix-weight gradients, shared parameters, and the batched affine backward pass.
+[Unit 4: Vector and matrix derivatives](units/04-vector-matrix-derivatives.qmd) is in progress. The recorded material covers exercises 1–6: Jacobians, vector–Jacobian products, matrix-weight gradients, shared parameters, the batched affine backward pass, and elementwise activations. The activation section works from one coordinate through explicit matrix notation to the equivalent diagonal-Jacobian calculation, with an interactive comparison.
 :::
 
 ## Reading this book

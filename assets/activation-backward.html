@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>An activation backward pass in two layouts</title>
+<style>
+:root { color-scheme:light dark; --bg:#fff; --ink:#203247; --muted:#526477; --line:#d8e0e8; --accent:#176e9d; --tint:#eaf5fc; --soft:#f6f8fb; }
+* { box-sizing:border-box; }
+html,body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.55 system-ui,sans-serif; }
+main { max-width:780px; margin:auto; padding:20px; }
+h1 { font-size:1.2rem; margin:0 0 8px; }
+h2 { font-size:1rem; margin:24px 0 10px; }
+p { margin:0 0 14px; }
+.muted { color:var(--muted); font-size:.9rem; }
+.controls { display:grid; grid-template-columns:1fr 1fr; gap:14px 20px; margin:18px 0; }
+label { display:block; font-size:.9rem; font-weight:650; }
+select,button { border:1px solid var(--line); border-radius:6px; background:var(--bg); color:inherit; padding:7px 10px; font:inherit; }
+select { width:100%; margin-top:6px; }
+button { cursor:pointer; align-self:end; justify-self:start; }
+input[type=range] { display:block; width:100%; margin:10px 0 0; accent-color:var(--accent); }
+output { color:var(--accent); font-variant-numeric:tabular-nums; }
+:focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
+.tables { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+.panel { background:var(--soft); border:1px solid var(--line); border-radius:8px; padding:12px; min-width:0; }
+table { border-collapse:separate; border-spacing:4px; margin:auto; font-variant-numeric:tabular-nums; }
+caption { caption-side:top; text-align:center; font-size:.9rem; font-weight:650; margin-bottom:6px; color:var(--ink); }
+.matrix td { min-width:58px; padding:7px 9px; text-align:center; font:1.08rem/1.4 Georgia,serif; font-variant-numeric:tabular-nums; border:2px solid transparent; border-radius:4px; background:var(--bg); }
+.matrix td.selected { border-color:var(--accent); color:var(--accent); background:var(--tint); font-weight:700; }
+.equation { margin:18px 0 0; padding:12px; background:var(--tint); border-left:3px solid var(--accent); border-radius:3px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.jacobian-wrap { max-width:100%; overflow-x:auto; }
+.jacobian { width:100%; font-size:.85rem; border-spacing:3px; }
+.jacobian th { font-weight:600; padding:5px 2px; }
+.jacobian td { padding:7px 3px; text-align:center; border:2px solid transparent; border-radius:3px; }
+.jacobian .zero { color:var(--muted); background:var(--soft); }
+.jacobian .diagonal { background:var(--tint); }
+.jacobian .selected { border-color:var(--accent); font-weight:750; color:var(--accent); }
+.jacobian .vector { background:var(--soft); }
+.legend { margin-top:10px; }
+.result { margin-bottom:0; padding-top:14px; border-top:1px solid var(--line); }
+@media(max-width:430px) {
+ main { padding:14px; }
+ .controls { grid-template-columns:1fr; gap:14px; }
+ .tables { gap:8px; }
+ .panel { padding:8px 3px; }
+ .matrix { border-spacing:2px; }
+ .matrix td { min-width:43px; padding:6px 3px; font-size:1rem; }
+ .jacobian { font-size:.73rem; border-spacing:1px; }
+ .jacobian td { padding:6px 1px; }
+ .jacobian th { padding:5px 1px; }
+}
+@media(prefers-color-scheme:dark) { :root { --bg:#18212b; --ink:#e5edf5; --muted:#b1becb; --line:#425368; --accent:#8ed4fc; --tint:#223e52; --soft:#202c39; } }
+</style>
+</head>
+<body>
+<main>
+<h1>One backward calculation, two layouts</h1>
+<p class="muted">Follow the same entry through the 2 × 2 tables and the diagonal Jacobian. The initial values reproduce exercise 6; decimals are shown here.</p>
+<div class="controls">
+ <div><label for="coordinate">Highlight one matching entry</label><select id="coordinate">
+  <option value="0">Row 1, column 1 · (1, 1)</option>
+  <option value="1" selected>Row 1, column 2 · (1, 2)</option>
+  <option value="2">Row 2, column 1 · (2, 1)</option>
+  <option value="3">Row 2, column 2 · (2, 2)</option>
+ </select></div>
+ <button id="reset" type="button">Reset to exercise 6</button>
+ <div><label for="activation">Forward value <span id="h-label">H₁₂</span> = <output id="h-value" for="activation">0.50</output></label><input id="activation" type="range" min="-0.95" max="0.95" step="0.05" value="0.5"></div>
+ <div><label for="incoming">Incoming gradient <span id="q-label">Q₁₂</span> = <output id="q-value" for="incoming">−4</output></label><input id="incoming" type="range" min="-8" max="8" step="0.25" value="-4"></div>
+</div>
+<h2>Keep the original matrix shape</h2>
+<div class="tables">
+ <div class="panel"><table class="matrix" id="h-table"><caption>H · forward values</caption><tbody></tbody></table></div>
+ <div class="panel"><table class="matrix" id="d-table"><caption>D = 1 − H ⊙ H · local slopes</caption><tbody></tbody></table></div>
+ <div class="panel"><table class="matrix" id="q-table"><caption>Q · incoming gradient</caption><tbody></tbody></table></div>
+ <div class="panel"><table class="matrix" id="r-table"><caption>∇<sub>Z</sub>L = Q ⊙ D · result</caption><tbody></tbody></table></div>
+</div>
+<p class="equation" id="equation" aria-live="polite"></p>
+<h2>The same values in the full Jacobian</h2>
+<p class="muted">Flatten in row-by-row order: (1, 1), (1, 2), (2, 1), (2, 2). Each row has one local derivative. The last two columns show the matching incoming gradient and backward result.</p>
+<div class="jacobian-wrap">
+ <table class="jacobian" id="jacobian">
+  <caption>J · rows are H entries, columns are Z entries</caption>
+  <thead><tr><th scope="col">Output</th><th scope="col">Z₁₁</th><th scope="col">Z₁₂</th><th scope="col">Z₂₁</th><th scope="col">Z₂₂</th><th scope="col">q</th><th scope="col">Jᵀq</th></tr></thead>
+  <tbody></tbody>
+ </table>
+</div>
+<p class="muted legend">The outlined entries track your selection. Off-diagonal zeros stay zero: each H entry depends on only its matching Z entry. Since J is diagonal, Jᵀ = J.</p>
+<p class="result">The four local slopes in D are all the diagonal values needed. Multiplying them by the matching Q entries gives the same result as Jᵀq. The twelve off-diagonal zeros do not need to be stored or multiplied.</p>
+</main>
+<script>
+(() => {
+ const defaults = { h:[0,0.5,-0.5,0.8], q:[2,-4,3,5] };
+ let h = defaults.h.slice();
+ let q = defaults.q.slice();
+ let selected = 1;
+ const ids = ['₁₁','₁₂','₂₁','₂₂'];
+ const coordinates = ['1, 1','1, 2','2, 1','2, 2'];
+ const coordinate = document.getElementById('coordinate');
+ const activation = document.getElementById('activation');
+ const incoming = document.getElementById('incoming');
+ const format = value => {
+  const normalized = Math.abs(value) < 1e-10 ? 0 : value;
+  return String(Number(normalized.toFixed(4))).replace('-', '−');
+ };
+ const makeCell = (value, className) => {
+  const cell = document.createElement('td');
+  cell.textContent = format(value);
+  cell.className = className;
+  return cell;
+ };
+ const fillMatrix = (id, values) => {
+  const rows = [0,1].map(row => {
+   const tr = document.createElement('tr');
+   for (let column=0; column<2; column++) {
+    const index = 2*row+column;
+    const cell = makeCell(values[index], index===selected ? 'selected' : '');
+    cell.setAttribute('aria-label', 'Row ' + (row+1) + ', column ' + (column+1) + ': ' + format(values[index]));
+    tr.append(cell);
+   }
+   return tr;
+  });
+  document.querySelector('#' + id + ' tbody').replaceChildren(...rows);
+ };
+ const render = () => {
+  const d = h.map(value => 1-value*value);
+  const r = q.map((value,index) => value*d[index]);
+  fillMatrix('h-table',h);
+  fillMatrix('d-table',d);
+  fillMatrix('q-table',q);
+  fillMatrix('r-table',r);
+  const rows = h.map((_,row) => {
+   const tr = document.createElement('tr');
+   const heading = document.createElement('th');
+   heading.scope = 'row';
+   heading.textContent = 'H' + ids[row];
+   tr.append(heading);
+   for (let column=0; column<4; column++) {
+    const diagonal = row===column;
+    const classes = (diagonal ? 'diagonal' : 'zero') + (diagonal && row===selected ? ' selected' : '');
+    const cell = makeCell(diagonal ? d[row] : 0,classes);
+    cell.setAttribute('aria-label', 'Derivative of H' + ids[row] + ' with respect to Z' + ids[column] + ': ' + format(diagonal ? d[row] : 0));
+    tr.append(cell);
+   }
+   tr.append(makeCell(q[row],'vector' + (row===selected ? ' selected' : '')));
+   tr.append(makeCell(r[row],'vector' + (row===selected ? ' selected' : '')));
+   return tr;
+  });
+  document.querySelector('#jacobian tbody').replaceChildren(...rows);
+  document.getElementById('h-label').textContent = 'H' + ids[selected];
+  document.getElementById('q-label').textContent = 'Q' + ids[selected];
+  document.getElementById('h-value').value = format(h[selected]);
+  document.getElementById('q-value').value = format(q[selected]);
+  document.getElementById('equation').textContent =
+   'Entry (' + coordinates[selected] + '): local slope = 1 − (' + format(h[selected]) + ')² = ' + format(d[selected]) +
+   '. Loss derivative with respect to Z' + ids[selected] + ' = (' + format(q[selected]) + ') × ' + format(d[selected]) +
+   ' = ' + format(r[selected]) + '.';
+ };
+ const syncControls = () => {
+  activation.value = h[selected];
+  incoming.value = q[selected];
+ };
+ coordinate.addEventListener('change', () => {
+  selected = Number(coordinate.value);
+  syncControls();
+  render();
+ });
+ activation.addEventListener('input', () => {
+  h[selected] = Number(activation.value);
+  render();
+ });
+ incoming.addEventListener('input', () => {
+  q[selected] = Number(incoming.value);
+  render();
+ });
+ document.getElementById('reset').addEventListener('click', () => {
+  h = defaults.h.slice();
+  q = defaults.q.slice();
+  selected = 1;
+  coordinate.value = selected;
+  syncControls();
+  render();
+ });
+ render();
+})();
+</script>
+</body>
+</html>

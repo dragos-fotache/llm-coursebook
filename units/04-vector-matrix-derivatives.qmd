@@ -1,15 +1,13 @@
 # Vector and matrix derivatives
 
-<p class="chapter-kicker">Milestone 1 · Unit 4 · In progress · Recorded through exercise 6 on 17 November 2026</p>
+<p class="chapter-kicker">Milestone 1 · Unit 4 · Completed 22 November 2026</p>
 
 The scalar engine in unit 3 propagated derivatives by multiplying local rates and accumulating contributions from shared paths. The same reasoning applies when an operation consumes and produces entire vectors or matrices.
 
 > How do we organize those local derivatives, and how do the resulting shapes determine a backward calculation?
 
 ::: {.callout-note title="Scope of this chapter"}
-This chapter records the material covered so far in unit 4: Jacobians as local linear maps, the scalar-loss backward rule, matrix-weight gradients, shared parameters, the batched affine layer, and elementwise activations. It includes six exercises and their worked solutions. The activation section follows one entry first, then develops the matrix notation and the equivalent diagonal-Jacobian calculation.
-
-Unit 4 is still in progress. Sum and mean reductions and the final unit checkpoint remain ahead; they are not introduced here.
+Seven exercises develop Jacobians as local linear maps and derive backward rules for matrix multiplication, shared parameters, bias broadcasting, elementwise activations, and sum and mean reductions. The final checkpoint combines those rules in a backward pass from a scalar loss to the inputs and parameters of a batched layer.
 :::
 
 ## A Jacobian predicts local vector changes
@@ -1114,10 +1112,199 @@ Choose an entry in the figure. Its matching positions are highlighted in the $2\
 
 <p class="interactive-caption">The initial values reproduce exercise 6. The figure runs entirely in your browser. <a href="../assets/activation-backward.html" target="_blank" rel="noopener">Open the interactive figure separately.</a></p>
 
-## Recorded checkpoint
+## Backward through a sum or mean
 
-The six exercises connect the scalar chain rule to Jacobian products, matrix-weight gradients, shared-parameter accumulation, the batched affine backward pass, and an elementwise activation.
+A batch of $B$ examples can produce one loss $\ell_r$ per example. A **reduction** combines these losses into a scalar. The sum and the mean over the batch are
 
-For an affine layer, matrix multiplication organizes the necessary path sums. For an elementwise activation, each input affects one matching output, so its backward rule scales matching entries. Both are direct evaluations of the same chain rule.
+$$
+L_{\mathrm{sum}}=\sum_{r=1}^{B}\ell_r,
+\qquad
+L_{\mathrm{mean}}=\frac{1}{B}\sum_{r=1}^{B}\ell_r,
+\qquad B\geq 1.
+$$
 
-The material recorded here ends after exercise 6. Unit 4 is still in progress: sum and mean reductions, their loss-gradient scaling, and the final unit checkpoint remain ahead. No network implementation or training run is part of this chapter's recorded work so far.
+The forward pass combines $B$ losses into one value. The backward pass gives every loss entry its own partial derivative. To find the derivative for one entry, fix its index $i$ and vary just $\ell_i$ by $h$. The sum changes by $h$ because only one term in the sum changes. The mean changes by $h/B$ because the batch size stays fixed.
+
+There is one coefficient per input entry. The sum gives every entry a coefficient of $1$, and the mean gives every entry a coefficient of $1/B$. These coefficients are constant because, for a fixed batch size, both reductions are linear in the loss vector.
+
+### Exercise 7: reduce the batch and trace the gradient to a shared weight
+
+1. Take $\boldsymbol{\ell}=(2,5,8)^\top$. Increase the middle loss from $5$ to $5.3$ and calculate the change in each reduction. Then increase it by a symbolic amount $h$ and derive the two partial derivatives with respect to $\ell_2$.
+2. For a general batch size $B$, vary one arbitrary entry $\ell_i$. Write the two gradients with respect to the entire column $\boldsymbol{\ell}$ and give their shapes.
+3. Suppose every $\ell_i$ depends on the same scalar weight $w$. Derive the two derivatives with respect to $w$. For $B=3$, evaluate them when the three local derivatives $d\ell_i/dw$ at the same $w$ are $2,-3,7$.
+
+::: {.callout-note collapse="true" title="Worked solution: reduction gradients and shared-weight scaling"}
+The original sum is $15$ and the original mean is $5$. With $\ell_2=5.3$, the sum becomes $15.3$ and the mean becomes $5.1$. The changes are $0.3$ and $0.1$, respectively.
+
+For the symbolic change from $5$ to $5+h$, subtract the original values.
+
+$$
+\begin{aligned}
+\Delta L_{\mathrm{sum}}&=(15+h)-15=h,\\
+\Delta L_{\mathrm{mean}}&=\frac{15+h}{3}-\frac{15}{3}=\frac{h}{3}.
+\end{aligned}
+$$
+
+Divide each change by $h\ne 0$. The quotients $1$ and $1/3$ are constant in $h$, so their limits as $h\to 0$ are the two partial derivatives with respect to $\ell_2$.
+
+The same argument applies to any fixed entry $\ell_i$ of a batch of size $B$. The exact changes are $h$ and $h/B$, so
+
+$$
+\frac{\partial L_{\mathrm{sum}}}{\partial \ell_i}=1,
+\qquad
+\frac{\partial L_{\mathrm{mean}}}{\partial \ell_i}=\frac1B.
+$$
+
+Collecting the partial derivatives in the same order as the loss entries gives
+
+$$
+\nabla_{\boldsymbol{\ell}}L_{\mathrm{sum}}=\mathbf 1_B,
+\qquad
+\nabla_{\boldsymbol{\ell}}L_{\mathrm{mean}}=\frac1B\mathbf 1_B.
+$$
+
+Here $\mathbf 1_B$ is the column of $B$ ones. Both gradients have shape $B\times 1$.
+
+When $w$ is shared, the chain rule adds one path through each $\ell_i(w)$. For a scalar objective $L$ formed by either reduction,
+
+$$
+\frac{dL}{dw}
+=\sum_{i=1}^{B}\frac{\partial L}{\partial \ell_i}
+\frac{d\ell_i}{dw}.
+$$
+
+With the two sets of coefficients, this gives
+
+$$
+\begin{aligned}
+\frac{dL_{\mathrm{sum}}}{dw}
+&=\sum_{i=1}^{B}1\cdot\frac{d\ell_i}{dw}
+=\sum_{i=1}^{B}\frac{d\ell_i}{dw},\\
+\frac{dL_{\mathrm{mean}}}{dw}
+&=\sum_{i=1}^{B}\frac1B\frac{d\ell_i}{dw}
+=\frac1B\sum_{i=1}^{B}\frac{d\ell_i}{dw}.
+\end{aligned}
+$$
+
+For the three derivatives $2,-3,7$, the sum gives $2-3+7=6$ and the mean gives $6/3=2$. Both calculations add the paths back to the same weight. The mean scales each path by $1/B$ at the reduction.
+:::
+
+## Unit checkpoint: combine the backward rules {#recorded-checkpoint}
+
+The checkpoint uses a batched affine layer followed by entrywise tanh.
+
+$$
+Z=XW+\mathbf 1_B b^\top,\qquad H=\tanh(Z).
+$$
+
+The rows of $X$ are examples. Let $n$ be the number of input coordinates, $m$ the number of output coordinates, and $T$ a fixed target matrix.
+
+| Quantity | Shape |
+|---|---|
+| Input $X$ | $B\times n$ |
+| Weights $W$ | $n\times m$ |
+| Shared bias $b$ | $m\times 1$ |
+| Pre-activation $Z$, activation $H$, and target $T$ | $B\times m$ |
+| Per-example loss column $\boldsymbol{\ell}$ | $B\times 1$ |
+| Objective $L$ | Scalar |
+
+For batch row $r$, sum the squared errors over the $m$ output coordinates and multiply by $1/2$. Average those per-example losses over the $B$ rows.
+
+$$
+\ell_r=\frac12\sum_{j=1}^{m}(H_{rj}-T_{rj})^2,
+\qquad
+L=\frac1B\sum_{r=1}^{B}\ell_r.
+$$
+
+1. Derive $\partial L/\partial H_{ri}$ and $\partial L/\partial Z_{ri}$. Give the matrix forms $Q=\nabla_H L$ and $G=\nabla_Z L$, and check their shapes.
+2. Starting with $G$, derive a component of each of $\nabla_X L$, $\nabla_W L$, and $\nabla_b L$. Write the matrix products, give their shapes, and explain which index each product sums over.
+3. Take a batch with at least two examples and at least three output coordinates. For $\partial L/\partial X_{21}$, identify which entries of $G$ contribute. For $\partial L/\partial Z_{23}$, identify which entries of $Q$ contribute. Explain how the local dependencies let you compute these gradients without building full Jacobians.
+
+::: {.callout-note collapse="true" title="Worked solution: a complete backward pass for one batched layer"}
+#### From the batch loss to the activation
+
+Fix row $r$ and output coordinate $i$. Within the list of per-example losses, only $\ell_r$ depends on $H_{ri}$. Within $\ell_r$, only the term with $j=i$ depends on that entry.
+
+$$
+\begin{aligned}
+Q_{ri}
+&=\frac{\partial L}{\partial H_{ri}}
+=\frac{\partial L}{\partial \ell_r}
+\frac{\partial \ell_r}{\partial H_{ri}}\\
+&=\frac1B\cdot\frac12\cdot 2(H_{ri}-T_{ri})
+=\frac{H_{ri}-T_{ri}}{B}.
+\end{aligned}
+$$
+
+The factor $1/B$ comes from the batch mean. The sum over output coordinates contributes a single squared-error term to this derivative. Collecting the entries gives
+
+$$
+Q=\frac{H-T}{B}\in\mathbb R^{B\times m}.
+$$
+
+#### From the activation to the affine output
+
+Only $H_{ri}=\tanh(Z_{ri})$ depends on the selected $Z_{ri}$. Its local slope is $1-H_{ri}^2$, so
+
+$$
+G_{ri}=\frac{\partial L}{\partial Z_{ri}}=Q_{ri}(1-H_{ri}^2),
+\qquad
+G=Q\odot(\mathbf 1_{B\times m}-H\odot H)
+\in\mathbb R^{B\times m}.
+$$
+
+Here $\odot$ denotes entrywise multiplication. The batch scaling is already present in $G$ through $Q$.
+
+#### From the affine output to the inputs and parameters
+
+In index notation the forward rule is $Z_{ri}=\sum_{k=1}^{n}X_{rk}W_{ki}+b_i$. Fix the entry being differentiated before choosing which index to sum over.
+
+| Fixed entry | Entries of $Z$ that can change | Local derivative |
+|---|---|---|
+| $X_{rk}$ | Row $r$, with $i$ varying | $\partial Z_{ri}/\partial X_{rk}=W_{ki}$ |
+| $W_{ki}$ | Column $i$, with $r$ varying | $\partial Z_{ri}/\partial W_{ki}=X_{rk}$ |
+| $b_i$ | Column $i$, with $r$ varying | $\partial Z_{ri}/\partial b_i=1$ |
+
+Multiply each local derivative by the matching entry of $G$ and add the contributing terms.
+
+$$
+\begin{aligned}
+\frac{\partial L}{\partial X_{rk}}
+&=\sum_{i=1}^{m}G_{ri}W_{ki}
+=(GW^\top)_{rk},\\
+\frac{\partial L}{\partial W_{ki}}
+&=\sum_{r=1}^{B}X_{rk}G_{ri}
+=(X^\top G)_{ki},\\
+\frac{\partial L}{\partial b_i}
+&=\sum_{r=1}^{B}G_{ri}
+=(G^\top\mathbf 1_B)_i.
+\end{aligned}
+$$
+
+- For $\nabla_X L=GW^\top$, row $r$ of $G$ pairs with row $k$ of $W$, which becomes column $k$ of $W^\top$. The inner axis runs over the $m$ outputs. The result has shape $B\times n$.
+- For $\nabla_W L=X^\top G$, column $k$ of $X$ becomes row $k$ of $X^\top$ and pairs with column $i$ of $G$. The inner axis runs over the $B$ examples. The result has shape $n\times m$.
+- For $\nabla_b L=G^\top\mathbf 1_B$, column $i$ of $G$ becomes row $i$ of $G^\top$ and pairs with the column of ones. This sums across the $B$ examples because every $Z_{ri}$ in that column uses the same $b_i$. The result has shape $m\times 1$.
+
+#### Why the backward products can be computed directly
+
+A full local Jacobian has a row for each output entry and a column for each input entry. The gradient for one input entry is the dot product of its Jacobian column with the incoming gradient, using the same output order for both.
+
+For $X_{21}$, only $Z_{2i}$ for $i=1,\ldots,m$ can change. Their local derivatives are $W_{1i}$. The Jacobian column for $X_{21}$ is zero at every other output position, so the dot product reduces to
+
+$$
+\frac{\partial L}{\partial X_{21}}
+=\sum_{i=1}^{m}G_{2i}W_{1i}.
+$$
+
+This uses row 2 of $G$ and row 1 of $W$ directly. The matrix product $GW^\top$ evaluates the corresponding dot products for all input entries.
+
+For $Z_{23}$ in the activation step, only $H_{23}$ can change. The Jacobian column has one potentially nonzero entry, so the dot product reduces to one multiplication.
+
+$$
+\frac{\partial L}{\partial Z_{23}}=Q_{23}(1-H_{23}^2).
+$$
+
+The entrywise rule evaluates those multiplications for all positions. In both steps the backward computation evaluates the Jacobian–gradient product using the known local derivatives and their dependency pattern.
+:::
+
+The next unit uses these rules to implement the forward and backward passes of a small network in NumPy.

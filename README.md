@@ -47,6 +47,6 @@ The optional scripts/generate_graphs.py regenerates unit 2's SVG computational g
 
 Unit 3's assets/scalar_autodiff.py is the standalone worked implementation. Keep it consistent with the complete code listing in the chapter. assets/backward-trace.html is a standalone interactive trace of the shared graph; it runs entirely in the browser and includes an intentionally early-callback order for comparison.
 
-Unit 4 is currently recorded through exercise 6, the elementwise tanh backward pass, with detailed fixed-versus-running-index explanations, entrywise matrix notation, and a direct comparison with the diagonal-Jacobian product. Keep its in-progress label until reductions and the remaining unit checkpoint are completed.
+Unit 4 is complete. Exercise 7 covers sum and mean reductions and their effect on shared-weight gradients. The final checkpoint combines the reduction, squared error, elementwise tanh, and batched affine rules in one worked backward pass.
 
 assets/bias-broadcast.html is a browser-local interactive view of the covered three-example bias-replication exercise. assets/activation-backward.html links the four-entry activation calculation to its diagonal Jacobian; it highlights matching entries, allows forward activation values and incoming gradients to be changed, and resets to exercise 6. Both figures use no external scripts or saved state.

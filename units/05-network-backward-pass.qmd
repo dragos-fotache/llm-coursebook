@@ -1,0 +1,286 @@
+# Explicit network backward pass
+
+<p class="chapter-kicker">Milestone 1 · Unit 5 · In progress · Recorded through Exercise 2 on 23 November 2026</p>
+
+Unit 4 derived the backward rules for a batched affine layer, an elementwise activation, and a batch mean. Now we compose those rules across a complete two-layer neural network and translate every equation directly into NumPy.
+
+> How do the batched backward rules compose across two layers, and which forward arrays must be saved so the backward pass can compute all four parameter gradients?
+
+::: {.callout-note title="Scope of this chapter (in progress)"}
+This chapter currently covers the two-layer network specification, the complete backward equations and forward-cache analysis (Exercise 1), and the explicit NumPy implementation with shape checks (Exercise 2). Tracing a single example's contribution against the batched computation and the closing unit checkpoint remain ahead.
+:::
+
+## A one-hidden-layer regression network
+
+We build a regression network with one `tanh` hidden layer and a scalar prediction per example:
+
+$$
+Z_1 = XW_1 + \mathbf{1}_B b_1^\top,
+\qquad
+H = \tanh(Z_1),
+\qquad
+\hat{Y} = HW_2 + \mathbf{1}_B b_2^\top,
+$$
+
+$$
+E = \hat{Y} - Y,
+\qquad
+L = \frac{1}{B}\sum_{r=1}^{B} E_{r1}^2.
+$$
+
+Because each example produces a single scalar prediction, $W_2$ has one column and $E$ has shape $B \times 1$. The mean squared error therefore sums only over the batch rows $r = 1, \ldots, B$ in that single column ($i = 1$), with no $\frac{1}{2}$ factor in front.
+
+Every intermediate array here is a scalar (0D), a 1D vector, or a 2D matrix:
+
+| Quantity | Mathematical shape | NumPy shape | Role |
+|---|---|---|---|
+| $X$ | $B \times d$ | `(B, d)` | Input batch (one example per row) |
+| $W_1$ | $d \times h$ | `(d, h)` | First-layer weights |
+| $b_1$ | $h \times 1$ | `(h,)` | First-layer bias |
+| $Z_1$ | $B \times h$ | `(B, h)` | First-layer pre-activations |
+| $H$ | $B \times h$ | `(B, h)` | Hidden activations |
+| $W_2$ | $h \times 1$ | `(h, 1)` | Output-layer weights |
+| $b_2$ | $1 \times 1$ | `(1,)` | Output bias |
+| $\hat{Y},\, Y,\, E$ | $B \times 1$ | `(B, 1)` | Predictions, targets, and residuals |
+| $L$ | Scalar | `float` | Batch mean squared error |
+
+In deep learning libraries, the word **tensor** is often used as a catch-all for $n$-dimensional arrays (0D scalar, 1D vector, 2D matrix, 3D+ arrays). In this unit every quantity is at most 2D.
+
+### Mapping bias math to NumPy broadcasting
+
+In Unit 4, bias replication across $B$ examples was written as $+\mathbf{1}_B b^\top$, and the matching backward column sum as $G^\top \mathbf{1}_B$. In NumPy:
+
+- Adding a 1D array `b` of shape `(m,)` to a 2D array `X @ W` of shape `(B, m)` broadcasts `b` down every row, adding `b[i]` to column `i`.
+- Summing a `(B, m)` gradient matrix with `G.sum(axis=0)` sums down the batch axis and returns shape `(m,)`, matching `b` directly.
+
+Keeping `b1` as `(h,)` and `b2` as `(1,)` avoids shape mismatches between forward broadcasting and backward reduction.
+
+## Deriving the two-layer backward pass
+
+Working strictly in reverse through the computation graph:
+
+$$
+X, W_1, b_1 \longrightarrow Z_1 \xrightarrow{\;\tanh\;} H \xrightarrow{\;W_2, b_2\;} \hat{Y} \xrightarrow{\;-Y\;} E \xrightarrow{\;\text{MSE}\;} L.
+$$
+
+### Exercise 1: backward equations, shapes, and forward cache
+
+1. Starting from a single residual entry $E_{r1}$ and moving backward through the network, derive matrix formulas and check shapes for:
+   - $\nabla_{\hat{Y}} L$
+   - $\nabla_{W_2} L$, $\nabla_{b_2} L$, and $\nabla_H L$
+   - $\nabla_{Z_1} L$
+   - $\nabla_{W_1} L$ and $\nabla_{b_1} L$
+2. Suppose `forward` computes $\hat{Y}$ and saves selected forward arrays in a `cache` dictionary for `backward` (which also receives `E` and `params`). Which forward arrays must be saved in `cache`, and why can $Z_1$ and $\hat{Y}$ be omitted?
+
+::: {.callout-note collapse="true" title="Worked solution: full backward pass and cache"}
+#### 1. Output loss and residual
+
+Only row $r$ of $E$ appears in the $r$-th term of $L = \frac{1}{B}\sum_{k=1}^{B} E_{k1}^2$:
+
+$$
+\frac{\partial L}{\partial E_{r1}} = \frac{2}{B} E_{r1},
+\qquad
+\nabla_E L = \frac{2}{B} E \quad (B \times 1).
+$$
+
+Since $E_{r1} = \hat{Y}_{r1} - Y_{r1}$, we have $\partial E_{r1}/\partial \hat{Y}_{r1} = 1$ and $\partial E_{k1}/\partial \hat{Y}_{r1} = 0$ for $k \neq r$. Call this incoming output-layer gradient $G_2 = \nabla_{\hat{Y}} L$:
+
+$$
+\frac{\partial L}{\partial \hat{Y}_{r1}} = \frac{2}{B} E_{r1},
+\qquad
+G_2 = \nabla_{\hat{Y}} L = \frac{2}{B} E \quad (B \times 1).
+$$
+
+#### 2. Second affine layer ($\hat{Y} = HW_2 + \mathbf{1}_B b_2^\top$)
+
+Each example's prediction is $\hat{Y}_{k1} = \sum_{s=1}^{h} H_{ks} W_{s1}^{(2)} + b_2$.
+
+- **Output weights $W_2$ ($h \times 1$):** weight $W_{j1}^{(2)}$ enters every example $k = 1, \ldots, B$ multiplied by $H_{kj}$:
+
+  $$
+  \frac{\partial L}{\partial W_{j1}^{(2)}}
+  = \sum_{k=1}^{B} \frac{\partial L}{\partial \hat{Y}_{k1}} H_{kj}
+  = \frac{2}{B} \sum_{k=1}^{B} H_{kj} E_{k1}.
+  $$
+
+  In matrix form, matching the shape of $W_2$:
+
+  $$
+  \underbrace{\nabla_{W_2} L}_{h \times 1}
+  = \underbrace{H^\top}_{h \times B} \underbrace{G_2}_{B \times 1}
+  = \frac{2}{B} H^\top E.
+  $$
+
+- **Output bias $b_2$ ($1 \times 1$):** the shared bias enters every example with local derivative $1$:
+
+  $$
+  \underbrace{\nabla_{b_2} L}_{1 \times 1}
+  = \underbrace{G_2^\top}_{1 \times B} \underbrace{\mathbf{1}_B}_{B \times 1}
+  = \frac{2}{B} \sum_{k=1}^{B} E_{k1}.
+  $$
+
+- **Hidden activations $H$ ($B \times h$):** entry $H_{ij}$ belongs strictly to example $i$. Changing $H_{ij}$ does not affect any other example's prediction, so $\partial \hat{Y}_{k1}/\partial H_{ij} = 0$ for $k \neq i$ and $\partial \hat{Y}_{i1}/\partial H_{ij} = W_{j1}^{(2)}$ for $k = i$. The sum over $k$ therefore collapses to the single term $k = i$:
+
+  $$
+  \frac{\partial L}{\partial H_{ij}}
+  = \frac{\partial L}{\partial \hat{Y}_{i1}} W_{j1}^{(2)}
+  = \frac{2}{B} E_{i1} W_{j1}^{(2)}.
+  $$
+
+  In matrix form:
+
+  $$
+  \underbrace{\nabla_H L}_{B \times h}
+  = \underbrace{G_2}_{B \times 1} \underbrace{W_2^\top}_{1 \times h}
+  = \frac{2}{B} E W_2^\top.
+  $$
+
+Notice that with $G_2 = \nabla_{\hat{Y}} L$, all three rules are identical in form to Unit 4's batched affine backward pass: $H^\top G_2$, $G_2^\top \mathbf{1}_B$, and $G_2 W_2^\top$.
+
+#### 3. Elementwise `tanh` activation ($H = \tanh(Z_1)$)
+
+Each entry $Z_{1,ij}$ affects only $H_{ij}$ with local derivative $1 - H_{ij}^2$:
+
+$$
+\frac{\partial L}{\partial Z_{1,ij}}
+= \frac{\partial L}{\partial H_{ij}} (1 - H_{ij}^2),
+\qquad
+\underbrace{G_1 = \nabla_{Z_1} L}_{B \times h}
+= \nabla_H L \odot (\mathbf{1}_{B \times h} - H \odot H).
+$$
+
+#### 4. First affine layer ($Z_1 = XW_1 + \mathbf{1}_B b_1^\top$)
+
+Applying the batched affine backward rules with incoming gradient $G_1 = \nabla_{Z_1} L$:
+
+$$
+\underbrace{\nabla_{W_1} L}_{d \times h}
+= \underbrace{X^\top}_{d \times B} \underbrace{G_1}_{B \times h},
+\qquad
+\underbrace{\nabla_{b_1} L}_{h \times 1}
+= \underbrace{G_1^\top}_{h \times B} \underbrace{\mathbf{1}_B}_{B \times 1}.
+$$
+
+#### 5. Forward cache
+
+Only **`X`**, **`H`**, and the residual **`E`** are needed from the forward computation (alongside `params`):
+
+- $E$ supplies $G_2 = \frac{2}{B} E$.
+- $H$ supplies both $\nabla_{W_2} L = H^\top G_2$ and the `tanh` local slope $1 - H \odot H$.
+- $X$ supplies $\nabla_{W_1} L = X^\top G_1$.
+
+$Z_1$ does not need to be cached because the `tanh` derivative is evaluated directly from $H = \tanh(Z_1)$ via $1 - H^2$. $\hat{Y}$ does not need to be cached once $E = \hat{Y} - Y$ is passed to `backward`.
+:::
+
+## Implementing the network in NumPy
+
+Separating the computation into `forward(X, params)`, `mse_loss(Y_hat, Y)`, and `backward(E, cache, params)` keeps the model predictions independent of the loss function and makes each step of the computation graph explicit in code.
+
+### Practical NumPy pitfalls to guard against
+
+1. **Silent 2D broadcasting in `Y_hat - Y`:** If `Y_hat` has shape `(B, 1)` and `Y` accidentally has shape `(B,)`, NumPy does not raise an error — it broadcasts the subtraction into a `(B, B)` matrix of pairwise differences. Checking both `Y_hat.shape == Y.shape` and `Y.ndim == 2 and Y.shape[1] == 1` catches both mismatched shapes and two 1D vectors cleanly.
+2. **Matching loss reduction and backward scaling:** `mse_loss` computes `np.mean(E ** 2)`, dividing by $B$. If `mse_loss` summed instead (`np.sum(E ** 2)`), the loss and the gradients (which carry the `2 / B` factor) would disagree by a factor of $B$.
+3. **Distinct test dimensions and non-saturated inputs:** Testing with distinct values such as $B = 4, d = 2, h = 3$ ensures an accidental transpose cannot pass a shape check. Using `float64` arrays of modest scale (such as `rng.normal`) avoids large pre-activations that saturate `tanh` ($1 - \tanh^2(z) \approx 0$) and keeps finite-difference perturbations well-behaved in unit 6.
+
+### Exercise 2: implement and verify shapes in NumPy
+
+Implement `forward`, `mse_loss`, and `backward` in NumPy using `float64` arrays, assert that every gradient matches its parameter shape, and run the pass on a reproducible batch with $B = 4, d = 2, h = 3$.
+
+Download the standalone module: [mlp_numpy.py](../assets/mlp_numpy.py).
+
+::: {.callout-note collapse="true" title="Worked solution: NumPy implementation and shape check"}
+```python
+import numpy as np
+
+
+def forward(X, params):
+    Z_1 = X @ params["W1"] + params["b1"]
+    H = np.tanh(Z_1)
+    Y_hat = H @ params["W2"] + params["b2"]
+    cache = {"H": H, "X": X}
+    return Y_hat, cache
+
+
+def mse_loss(Y_hat, Y):
+    if Y_hat.shape != Y.shape:
+        raise ValueError("Y_hat and Y do not have the same shape")
+    if Y.ndim != 2 or Y.shape[1] != 1:
+        raise ValueError("Wrong shape on Y and Y_hat: they should be (B, 1) column vectors")
+
+    E = Y_hat - Y
+    loss = float(np.mean(E**2))
+    return loss, E
+
+
+def backward(E, cache, params):
+    H = cache["H"]
+    B = H.shape[0]
+    X = cache["X"]
+    W1 = params["W1"]
+    W2 = params["W2"]
+    b1 = params["b1"]
+    b2 = params["b2"]
+
+    G_Yhat = (2 / B) * E
+    G_W2 = H.T @ G_Yhat
+    G_b2 = G_Yhat.sum(axis=0)
+    G_H = G_Yhat @ W2.T
+
+    G_Z1 = G_H * (1 - H * H)
+    G_W1 = X.T @ G_Z1
+    G_b1 = G_Z1.sum(axis=0)
+
+    if G_W1.shape != W1.shape:
+        raise ValueError("gradients of W1 do not have the same shape as W1")
+    if G_b1.shape != b1.shape:
+        raise ValueError("gradients of b1 do not have the same shape as b1")
+    if G_W2.shape != W2.shape:
+        raise ValueError("gradients of W2 do not have the same shape as W2")
+    if G_b2.shape != b2.shape:
+        raise ValueError("gradients of b2 do not have the same shape as b2")
+
+    return {"W1": G_W1, "b1": G_b1, "W2": G_W2, "b2": G_b2}
+```
+
+A reproducible check script with distinct dimensions $B = 4, d = 2, h = 3$:
+
+```python
+import numpy as np
+import mlp_numpy as n
+
+B, d, h = 4, 2, 3
+rng = np.random.default_rng(0)
+
+X = rng.normal(size=(B, d))
+params = {
+    "W1": rng.normal(size=(d, h)),
+    "b1": rng.normal(size=(h,)),
+    "W2": rng.normal(size=(h, 1)),
+    "b2": rng.normal(size=(1,)),
+}
+Y = rng.normal(size=(B, 1))
+
+Y_hat, cache = n.forward(X, params)
+loss, E = n.mse_loss(Y_hat, Y)
+grads = n.backward(E, cache, params)
+
+assert Y_hat.shape == (B, 1)
+assert E.shape == (B, 1)
+assert isinstance(loss, float)
+for name, param in params.items():
+    assert grads[name].shape == param.shape
+```
+
+With `default_rng(0)`, this batch gives `loss = 2.2923205406218257` and non-saturated gradients across all four parameter arrays:
+
+- `grads["W1"]` has shape `(2, 3)`
+- `grads["b1"]` has shape `(3,)`
+- `grads["W2"]` has shape `(3, 1)`
+- `grads["b2"]` has shape `(1,)`
+
+Every line of `backward` maps one-to-one onto an equation from Exercise 1: `G_Yhat` is $G_2 = \frac{2}{B}E$, layer 2 uses the affine rules with `(H, W2, G_Yhat)`, `G_Z1` applies the diagonal `tanh` slope `1 - H * H`, and layer 1 repeats the affine rules with `(X, G_Z1)`.
+:::
+
+## Ahead in this unit
+
+Next, we will trace a single example's contribution through the network and connect it directly to the batched matrix computation, then walk through the closing checkpoint explaining every line of the backward pass from the computation graph.

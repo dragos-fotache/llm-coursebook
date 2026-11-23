@@ -50,3 +50,5 @@ Unit 3's assets/scalar_autodiff.py is the standalone worked implementation. Keep
 Unit 4 is complete. Exercise 7 covers sum and mean reductions and their effect on shared-weight gradients. The final checkpoint combines the reduction, squared error, elementwise tanh, and batched affine rules in one worked backward pass.
 
 assets/bias-broadcast.html is a browser-local interactive view of the covered three-example bias-replication exercise. assets/activation-backward.html links the four-entry activation calculation to its diagonal Jacobian; it highlights matching entries, allows forward activation values and incoming gradients to be changed, and resets to exercise 6. Both figures use no external scripts or saved state.
+
+Unit 5 is in progress, currently recorded through Exercise 2 (the two-layer backward derivation, forward-cache analysis, and explicit NumPy implementation). assets/mlp_numpy.py is the standalone NumPy module matching the chapter's worked listing.

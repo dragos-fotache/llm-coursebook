@@ -23,6 +23,7 @@ book:
         - units/02-computational-graphs.qmd
         - units/03-scalar-autodiff.qmd
         - units/04-vector-matrix-derivatives.qmd
+        - units/05-network-backward-pass.qmd
   appendices:
     - reference.qmd
 

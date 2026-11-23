@@ -12,6 +12,8 @@ The chapters grow out of the learning sessions. Each brings together the explana
 [Unit 3: Scalar automatic differentiation](units/03-scalar-autodiff.qmd) is complete. It implements local backward rules, handles shared values, and assembles an automatic reverse traversal in Python.
 
 [Unit 4: Vector and matrix derivatives](units/04-vector-matrix-derivatives.qmd) is complete. It develops backward rules for batched affine layers, elementwise activations, and sum and mean reductions. The final checkpoint traces a scalar loss back through a batched layer and shows how to compute the gradients directly.
+
+[Unit 5: Explicit network backward pass](units/05-network-backward-pass.qmd) is in progress (recorded through Exercise 2). It composes the two-layer backward equations, identifies the minimal forward cache, and implements the forward pass, mean squared error, and explicit backward pass in NumPy.
 :::
 
 ## Reading this book

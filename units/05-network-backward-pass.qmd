@@ -1,14 +1,10 @@
 # Explicit network backward pass
 
-<p class="chapter-kicker">Milestone 1 · Unit 5 · In progress · Recorded through Exercise 2 on 23 November 2026</p>
+<p class="chapter-kicker">Milestone 1 · Unit 5 · Completed 24 November 2026</p>
 
-Unit 4 derived the backward rules for a batched affine layer, an elementwise activation, and a batch mean. Now we compose those rules across a complete two-layer neural network and translate every equation directly into NumPy.
+Unit 4 derived the backward rules for a batched affine layer, an elementwise activation, and a batch mean. Now we compose those rules across a complete two-layer neural network, translate every equation directly into NumPy, verify that batched matrix products equal the average of single-example gradients, and trace every line of `backward` back to the computation graph.
 
-> How do the batched backward rules compose across two layers, and which forward arrays must be saved so the backward pass can compute all four parameter gradients?
-
-::: {.callout-note title="Scope of this chapter (in progress)"}
-This chapter currently covers the two-layer network specification, the complete backward equations and forward-cache analysis (Exercise 1), and the explicit NumPy implementation with shape checks (Exercise 2). Tracing a single example's contribution against the batched computation and the closing unit checkpoint remain ahead.
-:::
+> How do the batched backward rules compose across two layers, which forward arrays must be saved for `backward`, and how does each batched line aggregate single-example contributions?
 
 ## A one-hidden-layer regression network
 
@@ -281,6 +277,141 @@ With `default_rng(0)`, this batch gives `loss = 2.2923205406218257` and non-satu
 Every line of `backward` maps one-to-one onto an equation from Exercise 1: `G_Yhat` is $G_2 = \frac{2}{B}E$, layer 2 uses the affine rules with `(H, W2, G_Yhat)`, `G_Z1` applies the diagonal `tanh` slope `1 - H * H`, and layer 1 repeats the affine rules with `(X, G_Z1)`.
 :::
 
-## Ahead in this unit
+## Single-example trace versus batched gradients
 
-Next, we will trace a single example's contribution through the network and connect it directly to the batched matrix computation, then walk through the closing checkpoint explaining every line of the backward pass from the computation graph.
+In this network, example $r$'s forward pass ($\mathbf{z}_1^{(r)}, \mathbf{h}^{(r)}, \hat{y}^{(r)}, \ell^{(r)}$) never touches any other row $s \neq r$. Write the batch mean squared error as the average of $B$ independent single-example losses:
+
+$$
+L = \frac{1}{B}\sum_{r=1}^{B} \ell^{(r)},
+\qquad
+\ell^{(r)} = \bigl(\hat{y}^{(r)} - y^{(r)}\bigr)^2.
+$$
+
+The $B$ examples interact only through the final mean reduction and through sharing the same parameters $W_1, b_1, W_2, b_2$.
+
+### Exercise 3: connect single-example contributions to the batched pass
+
+1. Suppose you run `forward`, `mse_loss`, and `backward` separately on each single example (`X[r:r+1]` of shape `(1, d)` and `Y[r:r+1]` of shape `(1, 1)`) to obtain $\nabla_\theta \ell^{(r)}$ for each $\theta \in \{W_1, b_1, W_2, b_2\}$. What exact relationship connects the batched gradient $\nabla_\theta L$ to $\nabla_\theta \ell^{(1)}, \ldots, \nabla_\theta \ell^{(B)}$, and why?
+2. Expand the $(i, j)$ entry of `G_W1 = X.T @ G_Z1` as an explicit sum over the batch index $r$. Identify what the $r$-th term represents in terms of example $r$'s own gradient, and explain where the $\frac{1}{B}$ factor enters even though `X.T @ G_Z1` does not divide by `B`.
+3. Without changing `mlp_numpy.py`, loop over $r = 0, \ldots, B-1$ on the $B = 4, d = 2, h = 3$ batch, combine the $B$ single-example gradients using your formula from part 1, verify agreement against the batched gradients with `np.allclose`, and inspect `np.max(np.abs(...))`. Explain why the maximum absolute difference can be on the order of $10^{-16}$ rather than guaranteed exact `0.0`.
+
+::: {.callout-note collapse="true" title="Worked solution: averaging per-example gradients"}
+#### 1. Batched gradient as the mean of single-example gradients
+
+Because $L = \frac{1}{B}\sum_{r=1}^{B} \ell^{(r)}$ and differentiation is linear (equivalently, each example's path through a shared parameter enters $L$ with local factor $\frac{1}{B}$ at the mean reduction):
+
+$$
+\nabla_\theta L = \frac{1}{B} \sum_{r=1}^{B} \nabla_\theta \ell^{(r)}
+\qquad
+\text{for every } \theta \in \{W_1, b_1, W_2, b_2\}.
+$$
+
+#### 2. Where $\frac{1}{B}$ lives inside `X.T @ G_Z1`
+
+Writing out the matrix product `G_W1 = X.T @ G_Z1` explicitly:
+
+$$
+(\nabla_{W_1} L)_{ij} = \sum_{r=1}^{B} X_{ri} \, (\nabla_{Z_1} L)_{rj}.
+$$
+
+There is no `/ B` on this line because $\frac{1}{B}$ already entered once at the top of `backward` in `G_Yhat = (2 / B) * E`, and then propagated row-by-row through the linear maps `G_H = G_Yhat @ W2.T` and `G_Z1 = G_H * (1 - H * H)`. Compared with running example $r$ alone ($B = 1$, where line 1 multiplies by `2`), every intermediate gradient row is scaled by $\frac{1}{B}$:
+
+$$
+(\nabla_{Z_1} L)_{rj} = \frac{1}{B} \frac{\partial \ell^{(r)}}{\partial (Z_1)_{rj}}.
+$$
+
+Each term in the sum is therefore $\frac{1}{B}$ times example $r$'s own weight gradient:
+
+$$
+X_{ri} \, (\nabla_{Z_1} L)_{rj}
+= \frac{1}{B} \left( X_{ri} \frac{\partial \ell^{(r)}}{\partial (Z_1)_{rj}} \right)
+= \frac{1}{B} \frac{\partial \ell^{(r)}}{\partial (W_1)_{ij}}.
+$$
+
+Summing across $r = 1, \ldots, B$ in `X.T @ G_Z1`, `H.T @ G_Yhat`, `G_Z1.sum(axis=0)`, and `G_Yhat.sum(axis=0)` automatically produces the batch average. Dividing by `B` again inside a layer would erroneously scale its gradient by $1/B^2$.
+
+#### 3. NumPy verification and floating-point differences
+
+```python
+import numpy as np
+import mlp_numpy as n
+
+
+def calc(X, Y, params):
+    Y_hat, cache = n.forward(X, params)
+    loss, E = n.mse_loss(Y_hat, Y)
+    grads = n.backward(E, cache, params)
+    return loss, grads
+
+
+B, d, h = 4, 2, 3
+rng = np.random.default_rng(0)
+
+X = rng.normal(size=(B, d))
+params = {
+    "W1": rng.normal(size=(d, h)),
+    "b1": rng.normal(size=(h,)),
+    "W2": rng.normal(size=(h, 1)),
+    "b2": rng.normal(size=(1,)),
+}
+Y = rng.normal(size=(B, 1))
+
+b_loss, b_grads = calc(X, Y, params)
+
+per_example = [calc(X[r : r + 1], Y[r : r + 1], params)[1] for r in range(B)]
+for name in params:
+    avg_grad = np.mean([g[name] for g in per_example], axis=0)
+    assert np.allclose(avg_grad, b_grads[name])
+    print(f"{name}: max abs diff = {np.max(np.abs(avg_grad - b_grads[name]))}")
+```
+
+With `default_rng(0)`, all four assertions pass with maximum absolute differences:
+
+- `W1`: `2.7755575615628914e-17`
+- `b1`: `5.551115123125783e-17`
+- `W2`: `0.0`
+- `b2`: `0.0`
+
+Although the batched and averaged single-example formulas are mathematically identical, `float64` arithmetic has finite precision and is not associative. Scaling by `2 / B` before a BLAS matrix multiply versus summing unscaled single-example gradients and dividing at the end executes a different sequence of rounded operations, so results can differ by a few units in the last place (around $10^{-16}$). (Here `W2` and `b2` happen to hit `0.0` partly because $B = 4$ is a power of two, so division by $4$ only shifts the binary exponent.)
+:::
+
+## Unit checkpoint: explain `backward` from the computation graph
+
+Here are the seven computation lines of `backward`:
+
+```python
+G_Yhat = (2 / B) * E        # 1
+G_W2   = H.T @ G_Yhat       # 2
+G_b2   = G_Yhat.sum(axis=0) # 3
+G_H    = G_Yhat @ W2.T      # 4
+G_Z1   = G_H * (1 - H * H)  # 5
+G_W1   = X.T @ G_Z1         # 6
+G_b1   = G_Z1.sum(axis=0)   # 7
+```
+
+1. For each line (1–7), state which local forward operation in the computation graph it reverses, what gradient and shape it produces, and why the NumPy operation takes that form (transpose, `axis=0` reduction, outer product, or elementwise product).
+2. Suppose `mse_loss` were changed from mean squared error to **sum** squared error, $L_{\mathrm{sum}} = \sum_{r=1}^{B} E_{r1}^2$. Which line(s) of `backward` would change, and why can the rest stay untouched?
+
+::: {.callout-note collapse="true" title="Worked solution: line-by-line mapping and loss modularity"}
+#### 1. Line-by-line graph mapping
+
+| Line | Code | Reverses local forward step | Gradient & shape | Why this NumPy form |
+|---|---|---|---|---|
+| 1 | `G_Yhat = (2 / B) * E` | $E = \hat{Y} - Y,\; L = \frac{1}{B}\sum_r E_{r1}^2$ | $\nabla_{\hat{Y}} L$, `(B, 1)` | Differentiating $\frac{1}{B}E_{r1}^2$ gives $\frac{2}{B}E_{r1}$ and $\partial E_{r1}/\partial \hat{Y}_{r1} = 1$. |
+| 2 | `G_W2 = H.T @ G_Yhat` | $\hat{Y} = HW_2 + \mathbf{1}_B b_2^\top$ ($W_2$ branch) | $\nabla_{W_2} L$, `(h, 1)` | Transposing `H` from `(B, h)` to `(h, B)` places each hidden unit's batch entries along a row so `@` contracts the shared batch axis `B`. |
+| 3 | `G_b2 = G_Yhat.sum(axis=0)` | $\hat{Y} = HW_2 + \mathbf{1}_B b_2^\top$ ($b_2$ branch) | $\nabla_{b_2} L$, `(1,)` | Broadcast $b_2$ enters every row of $\hat{Y}$ with local derivative $1$; `axis=0` sums down the batch axis while keeping shape `(1,)` instead of collapsing `(B, 1)` to a 0D scalar `()`. |
+| 4 | `G_H = G_Yhat @ W2.T` | $\hat{Y} = HW_2 + \mathbf{1}_B b_2^\top$ ($H$ branch) | $\nabla_H L$, `(B, h)` | Outer product of `(B, 1)` column `G_Yhat` and `(1, h)` row `W2.T`, pairing each example's incoming sensitivity $G_{2,r1}$ with $W_{j1}^{(2)}$ (generalizing to `(B, o) @ (o, h)` for $o$ outputs). |
+| 5 | `G_Z1 = G_H * (1 - H * H)` | $H = \tanh(Z_1)$ | $\nabla_{Z_1} L$, `(B, h)` | Elementwise product: each $H_{rj}$ depends only on the matching $Z_{1,rj}$ (diagonal Jacobian), with local slope $1 - H_{rj}^2$. |
+| 6 | `G_W1 = X.T @ G_Z1` | $Z_1 = XW_1 + \mathbf{1}_B b_1^\top$ ($W_1$ branch) | $\nabla_{W_1} L$, `(d, h)` | Transposing `X` to `(d, B)` aligns input features across examples with columns of `G_Z1` `(B, h)`, contracting the batch axis `B`. |
+| 7 | `G_b1 = G_Z1.sum(axis=0)` | $Z_1 = XW_1 + \mathbf{1}_B b_1^\top$ ($b_1$ branch) | $\nabla_{b_1} L$, `(h,)` | Each $b_{1,j}$ shifts column $j$ of $Z_1$ across all $B$ rows; `axis=0` sums down each column, returning shape `(h,)`. |
+
+#### 2. Switching MSE to sum squared error
+
+Only **line 1** changes — from `G_Yhat = (2 / B) * E` to `G_Yhat = 2 * E`.
+
+Lines 2–7 depend solely on the incoming gradient `G_Yhat` and the local forward operations of the network; they do not depend on how the loss function produced `G_Yhat`. Because every downstream backward step is linear in its incoming gradient, removing the `1 / B` factor at line 1 automatically removes it from every parameter gradient.
+:::
+
+## Ahead in Milestone 1
+
+Unit 6 will independently verify these gradients in two ways: by writing a finite-difference gradient checker (examining the trade-off between step-size error and floating-point roundoff) and by comparing the NumPy backward pass against PyTorch's automatic differentiation on identical arrays.

@@ -51,4 +51,4 @@ Unit 4 is complete. Exercise 7 covers sum and mean reductions and their effect o
 
 assets/bias-broadcast.html is a browser-local interactive view of the covered three-example bias-replication exercise. assets/activation-backward.html links the four-entry activation calculation to its diagonal Jacobian; it highlights matching entries, allows forward activation values and incoming gradients to be changed, and resets to exercise 6. Both figures use no external scripts or saved state.
 
-Unit 5 is in progress, currently recorded through Exercise 2 (the two-layer backward derivation, forward-cache analysis, and explicit NumPy implementation). assets/mlp_numpy.py is the standalone NumPy module matching the chapter's worked listing.
+Unit 5 is complete. It covers the two-layer backward derivation and forward-cache analysis (Exercise 1), the explicit NumPy implementation and shape checks (Exercise 2), the single-example trace versus batched gradients (Exercise 3), and the closing line-by-line backward-pass checkpoint. assets/mlp_numpy.py is the standalone NumPy module matching the chapter's worked listing.

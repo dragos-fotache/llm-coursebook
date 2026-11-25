@@ -1,0 +1,327 @@
+# Gradient verification and PyTorch
+
+<p class="chapter-kicker">Milestone 1 · Unit 6 · Completed 25 November 2026</p>
+
+Unit 5 implemented `forward`, `mse_loss`, and an explicit `backward` pass in NumPy. Before using those gradients to train a model, we need independent proof that every derivative is right. This unit builds a central finite-difference checker, analyzes the trade-off between mathematical truncation error and floating-point roundoff, compares the explicit backward pass against PyTorch's automatic differentiation, examines PyTorch's core autograd mechanics, and uses checker discrepancies to pinpoint backward-pass bugs.
+
+> How do we verify an explicit backward pass independently, why do finite differences fail at both large and tiny step sizes, what does PyTorch autograd add, and why is a decreasing training loss never enough to prove that gradients are correct?
+
+## Central finite differences: truncation error versus roundoff
+
+Holding the batch $(X, Y)$ and every other parameter fixed turns the network loss into a one-variable scalar function $f(\theta)$ of a single scalar weight or bias entry $\theta$. Perturbing $\theta$ symmetrically by $\pm \varepsilon$ gives the **central-difference** estimate of $f'(\theta)$:
+
+$$
+D_{\varepsilon}(\theta) = \frac{f(\theta + \varepsilon) - f(\theta - \varepsilon)}{2\varepsilon}.
+$$
+
+Because $D_\varepsilon(\theta)$ calls only `forward` and `mse_loss` — never `backward` — it provides an independent slope estimate directly from function evaluations.
+
+### Why central differences cancel the quadratic error term
+
+Expanding $f(\theta \pm \varepsilon)$ around $\theta$ by Taylor's theorem gives
+
+$$
+\begin{aligned}
+f(\theta + \varepsilon) &= f(\theta) + \varepsilon f'(\theta) + \frac{\varepsilon^2}{2} f''(\theta) + \frac{\varepsilon^3}{6} f'''(\theta) + O(\varepsilon^4), \\
+f(\theta - \varepsilon) &= f(\theta) - \varepsilon f'(\theta) + \frac{\varepsilon^2}{2} f''(\theta) - \frac{\varepsilon^3}{6} f'''(\theta) + O(\varepsilon^4).
+\end{aligned}
+$$
+
+Subtracting the second line from the first cancels both $f(\theta)$ and the $\frac{\varepsilon^2}{2} f''(\theta)$ term, leaving
+
+$$
+\frac{f(\theta + \varepsilon) - f(\theta - \varepsilon)}{2\varepsilon}
+= f'(\theta) + \frac{\varepsilon^2}{6} f'''(\theta) + O(\varepsilon^4).
+$$
+
+Two competing sources of error govern the accuracy of $D_\varepsilon(\theta)$ in floating-point arithmetic:
+
+1. **Mathematical truncation error ($O(\varepsilon^2)$):** Even in exact arithmetic, the omitted $\frac{\varepsilon^2}{6}f'''(\theta)$ term shrinks by roughly $100\times$ every time $\varepsilon$ is reduced by $10\times$.
+2. **Floating-point roundoff error ($O(u/\varepsilon)$):** IEEE-754 `float64` represents values to relative precision $u \approx 1.11 \times 10^{-16}$. Each computed loss $\hat{f}(\theta \pm \varepsilon)$ carries rounding error on the order of $u\,|f(\theta)|$. Subtracting two nearly equal losses loses leading significant digits, and dividing by $2\varepsilon$ amplifies the rounding error by $1/\varepsilon$ — growing roughly $10\times$ per decade as $\varepsilon$ shrinks, until $\hat{f}(\theta + \varepsilon)$ and $\hat{f}(\theta - \varepsilon)$ round to identical floats and the numerator collapses to zero (**catastrophic cancellation**).
+
+Balancing the two terms,
+
+$$
+\varepsilon^2 \sim \frac{u}{\varepsilon}
+\quad\Longrightarrow\quad
+\varepsilon^* \sim u^{1/3} \approx \bigl(1.11 \times 10^{-16}\bigr)^{1/3} \approx 5 \times 10^{-6},
+$$
+
+places the sweet spot for `float64` central differences near $\varepsilon = 10^{-5}$. (By contrast, `float32` has $u \approx 6 \times 10^{-8}$, shifting $\varepsilon^*$ up near $4 \times 10^{-3}$ with orders of magnitude less headroom — which is why gradient checks should be run in `float64`.)
+
+### Exercise 1: step-size sweep on a single weight
+
+Using the Unit 5 seeded `float64` batch (`default_rng(0)`, $B = 4, d = 2, h = 3$) and [mlp_numpy.py](../assets/mlp_numpy.py):
+
+1. Write a helper `estimate_gradient(X, Y, params, epsilon, param_name, index)` that computes the central difference for one scalar parameter entry and always restores the original entry afterward (even if an exception occurs).
+2. Compare `backward`'s gradient for `W1[0, 0]` against `estimate_gradient` for $\varepsilon = 10^{-1}, 10^{-2}, \ldots, 10^{-16}$.
+3. Identify the step size with closest agreement, verify the $100\times$ per-decade drop in the truncation regime, and pinpoint where roundoff and total cancellation take over.
+
+::: {.callout-note collapse="true" title="Worked solution: step-size sweep on W1[0, 0]"}
+```python
+def estimate_gradient(X, Y, params, epsilon, param_name, index):
+    param = params[param_name]
+    theta = param[index]
+    param[index] = theta + epsilon
+    try:
+        Y_hat_plus, _ = n.forward(X, params)
+        loss_plus, _ = n.mse_loss(Y_hat_plus, Y)
+        param[index] = theta - epsilon
+        Y_hat_minus, _ = n.forward(X, params)
+        loss_minus, _ = n.mse_loss(Y_hat_minus, Y)
+        return (loss_plus - loss_minus) / (2 * epsilon)
+    finally:
+        param[index] = theta
+```
+
+Using `try ... finally` guarantees `params[param_name][index]` is restored to `theta` even if `forward` or `mse_loss` raises a shape error.
+
+On the seeded `default_rng(0)` fixture (`loss = 2.2923205406218257`), the explicit backward pass gives `grads["W1"][0, 0] = 0.0004321482694442698`. Sweeping $\varepsilon$ across 16 orders of magnitude yields:
+
+| $\varepsilon$ | Central-difference estimate | $|D_\varepsilon - \text{analytic}|$ | Regime |
+|---:|---:|---:|---|
+| $10^{-1}$ | `+6.6703384212e-04` | `2.349e-04` | Truncation ($O(\varepsilon^2)$) |
+| $10^{-2}$ | `+4.3449064142e-04` | `2.342e-06` | Truncation ($\approx 100\times$ smaller) |
+| $10^{-3}$ | `+4.3217169243e-04` | `2.342e-08` | Truncation ($\approx 100\times$ smaller) |
+| $10^{-4}$ | `+4.3214850587e-04` | `2.364e-10` | Truncation ($\approx 100\times$ smaller) |
+| **$10^{-5}$** | **`+4.3214827272e-04`** | **`3.278e-12`** | **Best agreement** |
+| $10^{-6}$ | `+4.3214831713e-04` | `4.769e-11` | Roundoff ($O(u/\varepsilon)$) |
+| $10^{-7}$ | `+4.3214765100e-04` | `6.184e-10` | Roundoff |
+| $10^{-8}$ | `+4.3212100564e-04` | `2.726e-08` | Roundoff |
+| $10^{-9}$ | `+4.3232084579e-04` | `1.726e-07` | Roundoff |
+| $10^{-10}$ | `+4.3298697960e-04` | `8.387e-07` | Roundoff |
+| $10^{-11}$ | `+4.4408920985e-04` | `1.194e-05` | Coarse float64 steps ($\Delta L \approx 8.88\times 10^{-15}$) |
+| $10^{-12}$ | `+4.4408920985e-04` | `1.194e-05` | Coarse float64 steps ($\Delta L \approx 8.88\times 10^{-16}$) |
+| $10^{-13}$ – $10^{-16}$ | `0.0000000000e+00` | `4.321e-04` | Complete cancellation ($L_+ = L_-$) |
+
+From $10^{-1}$ down to $10^{-4}$, every $10\times$ decrease in $\varepsilon$ cuts the error by almost exactly $100\times$. Agreement peaks at $\varepsilon = 10^{-5}$ with a discrepancy of `3.28e-12`, then degrades roughly $10\times$ per decade as subtraction cancels leading digits, until $L(\theta + \varepsilon)$ and $L(\theta - \varepsilon)$ round to identical `float64` values at $\varepsilon \le 10^{-13}$.
+:::
+
+### Interactive view: truncation versus roundoff across layers
+
+Drag the step-size slider to inspect both perturbed losses and their difference, and switch between `W1[0, 0]` and `W2[0, 0]` to see why output-layer parameters have no truncation wall on the right.
+
+~~~{=html}
+<iframe class="interactive-frame" data-auto-height="true" title="Interactive central-difference error versus step size" src="../assets/finite-diff-tradeoff.html" loading="lazy"></iframe>
+~~~
+
+<p class="interactive-caption">Exact `float64` measurements on the Unit 5 seeded batch (`B=4, d=2, h=3`). <a href="../assets/finite-diff-tradeoff.html" target="_blank" rel="noopener">Open the interactive figure separately.</a></p>
+
+## Full-parameter numerical check and tolerances
+
+A single-weight check verifies only one scalar derivative. Extending `estimate_gradient` across every entry of `W1`, `b1`, `W2`, and `b2` checks all $P = 2\cdot 3 + 3 + 3\cdot 1 + 1 = 13$ parameters at once.
+
+### Exercise 2: check all 13 entries and justify a tolerance
+
+1. Generalize the central-difference check to iterate over every scalar index of `W1`, `b1`, `W2`, and `b2` at $\varepsilon = 10^{-5}$, storing the estimates in arrays matching each parameter's shape.
+2. Compare the numerical arrays against a single `backward` call and report the maximum absolute discrepancy for each array.
+3. Count how many forward passes the numerical check requires versus `backward`.
+4. Explain why `W2` and `b2` actually reach their smallest errors at $\varepsilon = 10^{-1}$ (`1.78e-15`), whereas `W1` and `b1` require $\varepsilon = 10^{-5}$, and justify an absolute tolerance for this fixture.
+
+::: {.callout-note collapse="true" title="Worked solution: 13-entry central-difference check"}
+```python
+def numerical_gradients(X, Y, params, epsilon=1e-5):
+    num_grads = {}
+    for name, param in params.items():
+        est = np.empty_like(param)
+        for index in np.ndindex(param.shape):
+            est[index] = estimate_gradient(X, Y, params, epsilon, name, index)
+        num_grads[name] = est
+    return num_grads
+```
+
+Running this on the seeded `float64` fixture at $\varepsilon = 10^{-5}$ produces:
+
+| Parameter | Shape | Scalar entries | Max $|\text{num} - \text{backward}|$ at $10^{-5}$ |
+|---|---|---:|---:|
+| `W1` | `(2, 3)` | 6 | `3.77e-11` |
+| `b1` | `(3,)` | 3 | `4.55e-11` |
+| `W2` | `(3, 1)` | 3 | `1.94e-11` |
+| `b2` | `(1,)` | 1 | `9.67e-12` |
+
+#### Cost comparison
+
+Each scalar parameter needs 2 perturbed forward passes ($+\varepsilon$ and $-\varepsilon$), so checking $P = 13$ parameters requires **$2P = 26$ perturbed forward passes** (27 total including the baseline forward pass), compared with **1 forward pass and 1 backward pass** for reverse-mode differentiation. That $O(P)$ cost makes finite differences ideal for verifying small test fixtures, and completely impractical for training a network with millions or billions of parameters.
+
+#### Why output-layer parameters have no truncation error
+
+When an entry of `W2` or `b2` varies while `W1`, `b1`, and `X` stay fixed, the hidden matrix $H = \tanh(XW_1 + \mathbf{1}_B b_1^\top)$ is constant. The prediction $\hat{Y} = HW_2 + \mathbf{1}_B b_2^\top$ is therefore linear in every entry of `W2` and `b2`, and the mean squared error $L = \frac{1}{B}\|\hat{Y} - Y\|_2^2$ is **strictly quadratic** in that parameter. Every third and higher derivative vanishes identically ($f''' \equiv 0$), so central differences have **zero mathematical truncation error** in exact arithmetic. Only roundoff $O(u/\varepsilon)$ remains — which gets smaller as $\varepsilon$ gets larger, reaching `1.78e-15` at $\varepsilon = 10^{-1}$.
+
+Hidden-layer parameters (`W1`, `b1`) pass through the nonlinear `tanh`, so $f''' \neq 0$ and $\varepsilon = 10^{-5}$ minimizes the worst-case discrepancy across all 13 entries (`4.55e-11`).
+
+#### Justified tolerance
+
+With a worst-case discrepancy of `4.55e-11` at $\varepsilon = 10^{-5}$, setting an absolute tolerance of `1e-9` provides roughly **$22\times$ headroom** over normal numerical noise on this `float64` fixture while remaining 7–9 orders of magnitude tighter than typical backward-pass errors (which are $O(10^{-1})$ to $O(10^1)$).
+:::
+
+## Independent verification with PyTorch autograd
+
+Finite differences test the derivatives using only numerical perturbations. A second, complementary check is to implement the same computation in PyTorch using identical `float64` arrays and compare our explicit NumPy gradients against PyTorch's reverse-mode automatic differentiation.
+
+### Exercise 3: compare NumPy `backward` against PyTorch `.backward()`
+
+Using the same seeded `float64` arrays `X`, `Y`, `W1`, `b1`, `W2`, and `b2`:
+
+1. Create PyTorch tensors from the NumPy arrays with `requires_grad=True` on the four parameter tensors (`W1`, `b1`, `W2`, `b2`).
+2. Compute the identical forward pass and mean squared error in PyTorch (`torch.tanh`, `@`, `torch.mean(E ** 2)`), then call `loss_torch.backward()`.
+3. Compare both the scalar loss (`loss` vs. `loss_torch.item()`) and all four `.grad` arrays against the NumPy `backward` output.
+
+Download the complete standalone verification script: [verify_gradients.py](../assets/verify_gradients.py).
+
+::: {.callout-note collapse="true" title="Worked solution: PyTorch autograd comparison"}
+```python
+import numpy as np
+import torch
+import mlp_numpy as n
+
+B, d, h = 4, 2, 3
+rng = np.random.default_rng(0)
+X = rng.normal(size=(B, d))
+params = {
+    "W1": rng.normal(size=(d, h)),
+    "b1": rng.normal(size=(h,)),
+    "W2": rng.normal(size=(h, 1)),
+    "b2": rng.normal(size=(1,)),
+}
+Y = rng.normal(size=(B, 1))
+
+# Explicit NumPy forward + backward
+Y_hat, cache = n.forward(X, params)
+loss, E = n.mse_loss(Y_hat, Y)
+grads = n.backward(E, cache, params)
+
+# Independent PyTorch forward + autograd
+X_t = torch.from_numpy(X)
+Y_t = torch.from_numpy(Y)
+params_t = {
+    name: torch.from_numpy(arr.copy()).requires_grad_()
+    for name, arr in params.items()
+}
+
+Z_1_t = X_t @ params_t["W1"] + params_t["b1"]
+H_t = torch.tanh(Z_1_t)
+Y_hat_t = H_t @ params_t["W2"] + params_t["b2"]
+E_t = Y_hat_t - Y_t
+loss_t = torch.mean(E_t ** 2)
+loss_t.backward()
+
+print(f"loss diff: {abs(loss - loss_t.item()):.3e}")
+for name in ("W1", "b1", "W2", "b2"):
+    diff = np.max(np.abs(grads[name] - params_t[name].grad.numpy()))
+    print(f"{name} max abs diff: {diff:.3e}")
+```
+
+Using `arr.copy()` before `torch.from_numpy` keeps the PyTorch parameters decoupled from the NumPy arrays (`torch.from_numpy` shares the underlying memory buffer when given an array directly).
+
+On the Unit 5 `default_rng(0)` fixture:
+
+| Quantity | NumPy vs. PyTorch max abs diff |
+|---|---:|
+| `loss` (`2.2923205406218257`) | `0.000e+00` |
+| `W1` | `1.288e-16` |
+| `b1` | `1.110e-16` |
+| `W2` | `4.441e-16` |
+| `b2` | `4.441e-16` |
+
+Because both NumPy `backward` and PyTorch autograd evaluate exact analytical chain-rule expressions (with zero step-size truncation error), their agreement reaches `float64` machine precision ($\sim 10^{-16}$) rather than the $\sim 10^{-11}$ floor of central differences.
+:::
+
+### Core PyTorch autograd mechanics
+
+Moving from our educational Unit 3 scalar engine to PyTorch highlights two deliberate design behaviors you will rely on in every training script:
+
+#### 1. Gradient accumulation across `.backward()` calls
+
+Unlike Unit 3's `Value.backward()`, which cleared reachable `.grad` fields on every call, **PyTorch never zeros `.grad` automatically**. Calling `.backward()` a second time without clearing `.grad` *adds* (`+=`) the new gradient into the existing tensor: running forward and `.backward()` twice on the same batch doubles `.grad`, three times triples it, and so on.
+
+Mathematically, this mirrors linearity of differentiation: if a batch is split into micro-batches with losses $L_1, L_2, \ldots, L_k$, then
+
+$$
+\nabla_\theta \sum_{i=1}^{k} L_i = \sum_{i=1}^{k} \nabla_\theta L_i.
+$$
+
+- **When you want accumulation:** in large-model training, accumulating gradients across several micro-batches simulates a larger effective batch size when the full batch does not fit in GPU VRAM.
+- **When you do not want accumulation:** in a standard training step, you must explicitly clear gradients before (or after) each step via `param.grad.zero_()` or `optimizer.zero_grad()`, otherwise previous steps contaminate the current gradient.
+- PyTorch frees the forward computation graph after each `.backward()` call by default, so a second `.backward()` requires recomputing the forward pass.
+
+#### 2. `torch.no_grad()` for parameter updates and inference
+
+Any operation touching a tensor with `requires_grad=True` causes PyTorch to record a node in its dynamic computation graph and keep the intermediate tensors needed for `.backward()`. Wrapping code in `with torch.no_grad():` disables graph tracking for two distinct reasons:
+
+1. **In-place parameter updates:** Executing `W1_t -= lr * W1_t.grad` while autograd is enabled raises a `RuntimeError`. `W1_t` is a leaf tensor (an input to the graph); overwriting it in-place under autograd would turn it into an intermediate result while attempting to keep its leaf status, invalidating any graph that references it. Wrapping the update inside `with torch.no_grad():` tells PyTorch that the update is outside the differentiated computation.
+2. **Inference and evaluation:** Weights are not modified during inference, yet `with torch.no_grad():` is still essential for **memory (VRAM) and speed**. Just as Unit 5's `forward` saved `cache = {"H": H, "X": X}` solely for `backward`, PyTorch with autograd enabled builds the graph and retains every layer's intermediate activations in case `.backward()` is called later. Inside `torch.no_grad()`, `loss_eval.requires_grad` is `False`, `loss_eval.grad_fn` is `None`, and intermediate activations can be freed as soon as each layer finishes — critical when running inference on a large language model.
+
+## Unit checkpoint: bug diagnosis and what verification establishes
+
+A gradient checker is not just a pass/fail stamp — the pattern of discrepancies across parameters tells you *where* in the computation graph a bug lives.
+
+### Part 1: locating bugs from checker signatures
+
+Recall the seven computation lines of `backward` from [mlp_numpy.py](../assets/mlp_numpy.py) with batch size $B = 4$:
+
+```python
+G_Yhat = (2 / B) * E        # 1
+G_W2   = H.T @ G_Yhat       # 2
+G_b2   = G_Yhat.sum(axis=0) # 3
+G_H    = G_Yhat @ W2.T      # 4
+G_Z1   = G_H * (1 - H * H)  # 5
+G_W1   = X.T @ G_Z1         # 6
+G_b1   = G_Z1.sum(axis=0)   # 7
+```
+
+Suppose you compare manual `backward` against PyTorch on all four parameters and observe three separate failure patterns:
+
+- **Case A:** `W2` and `b2` agree (`~1e-16`), while **both** `W1` and `b1` fail with large, entry-dependent errors.
+- **Case B:** `W2`, `b2`, and `W1` all agree (`~1e-16`), while **only** `b1` fails — and every entry of manual `G_b1` is $\frac{1}{4}$ of PyTorch's `b1.grad`.
+- **Case C:** **All four** (`W1`, `b1`, `W2`, `b2`) fail, and every entry of every manual gradient is $4\times$ PyTorch's gradient.
+
+For each case, determine which line(s) of `backward` can contain the bug and identify a concrete mistake that produces that signature.
+
+### Part 2: what agreement proves — and what it can miss
+
+Your explicit `backward` now agrees with central differences (`~1e-11` at `1e-5`) and with PyTorch autograd (`~1e-16`). What exactly does each check establish, and what kind of bug could still slip past a check?
+
+### Part 3: why a decreasing loss is not a gradient check
+
+Suppose someone skips gradient checking, runs gradient descent, and sees the training loss steadily drop. Geometrically, why does that observation fail to prove that `backward` is bug-free?
+
+::: {.callout-note collapse="true" title="Worked solution: diagnosis, verification scope, and the descent half-space"}
+#### 1. Reading the three bug signatures
+
+| Case | Failing parameters | Isolated line(s) | Concrete example & observed max diffs on the fixture |
+|---|---|---|---|
+| **A** | `W1`, `b1` only (`W2`, `b2` pass) | **Line 4 (`G_H`) or Line 5 (`G_Z1`)** — downstream of `G_Yhat` (proved right by `W2`, `b2`), upstream of both `G_W1` and `G_b1` | Omitting `1 - H * H` (`G_Z1 = G_H`): `W1` diff `1.27`, `b1` diff `1.34`; `W2` and `b2` remain `4.44e-16`. |
+| **B** | `b1` only, scaled by `1/B = 1/4` | **Line 7 (`G_b1`)** — `G_Z1` must be right because `W1` passed | Using `G_Z1.mean(axis=0)` instead of `.sum(axis=0)` divides by `B` a second time: `b1` diff `1.05`; `W1`, `W2`, `b2` remain $\le 4.44\times 10^{-16}$. |
+| **C** | All four, scaled by `B = 4` | **Line 1 (`G_Yhat`)** — root of the backward pass; scales every downstream gradient linearly | Omitting `/ B` (`G_Yhat = 2 * E`): `W1` `0.669`, `b1` `4.21`, `W2` `7.00`, `b2` `7.90` — every entry is exactly $4\times$ PyTorch's gradient. |
+
+Tracing which parameter gradients pass and which fail narrows a bug rapidly down the reverse computation graph before you even inspect the algebra line by line.
+
+#### 2. What each check verifies — and what it misses
+
+| Check | What it verifies | What can still slip past it |
+|---|---|---|
+| **Central differences** | **Internal consistency** between `forward` + `mse_loss` and `backward`. Because it calls `mse_loss` directly, a bug on the `loss = ...` line (such as forgetting `** 2`) *is* caught immediately when `backward` still computes `(2 / B) * E`. | A **mutually consistent wrong objective** — e.g., accidentally implementing sum squared error in *both* `mse_loss` and `backward`, or the wrong activation in *both* `forward` and `backward`. |
+| **PyTorch autograd** | Agreement of both `loss` and all `.grad` tensors against an **independent** automatic-differentiation implementation, down to `float64` machine precision ($\sim 10^{-16}$). | Comparing **only gradients** while ignoring `loss` can miss a bug isolated to the `loss = ...` line (because `backward` takes `E`, not `loss`). Copying the same conceptual mistake into both the NumPy and PyTorch formulas also passes both. |
+
+Using both checks together — and comparing `loss` as well as every gradient array — covers both implementation bugs and formula mismatches.
+
+#### 3. Why decreasing loss does not prove gradients are correct
+
+For a small update $\Delta\theta = -\eta\,g_{\text{buggy}}$ along a buggy gradient vector $g_{\text{buggy}}$, the first-order local approximation from Unit 1 gives
+
+$$
+\Delta L \approx (\nabla_\theta L)^\top \Delta\theta = -\eta\,(\nabla_\theta L)^\top g_{\text{buggy}}.
+$$
+
+The loss decreases ($\Delta L < 0$) whenever the dot product is positive:
+
+$$
+(\nabla_\theta L)^\top g_{\text{buggy}} > 0.
+$$
+
+Geometrically, where the loss surface is locally approximated by a hyperplane, this inequality holds for the entire **180° open half-space** of directions centered on $-\nabla_\theta L$. Half of all directions in parameter space still push the loss downward for a small enough step. Severe bugs — such as omitting `1 - H * H`, dropping `/ B`, or even zeroing `G_W1` completely while updating `W2` and `b2` — frequently land inside that half-space and produce a smoothly falling loss curve while preventing the network from learning properly.
+:::
+
+## Ahead in Milestone 1
+
+With the backward pass independently verified, Unit 7 puts these gradients to work in a real training loop: fitting a small inspectable nonlinear regression problem with gradient descent, plotting predictions, loss, and gradient magnitudes, running controlled experiments (learning rate, linear vs. nonlinear capacity, activation saturation), and practicing how to separate derivative bugs from optimization problems.

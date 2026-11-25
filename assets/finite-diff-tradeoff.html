@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Central-difference error versus step size</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #fff;
+  --ink: #203247;
+  --muted: #526477;
+  --line: #d8e0e8;
+  --grid: #e8eef4;
+  --accent: #176e9d;
+  --accent2: #c45b1a;
+  --tint: #eaf5fc;
+  --soft: #f6f8fb;
+  --ok: #1b7a46;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 system-ui, sans-serif; }
+main { max-width: 780px; margin: auto; padding: 20px; }
+h1 { font-size: 1.18rem; margin: 0 0 6px; }
+p { margin: 0 0 12px; }
+.muted { color: var(--muted); font-size: .9rem; }
+.controls { display: grid; grid-template-columns: 1fr 1.2fr; gap: 14px 20px; margin: 16px 0 14px; align-items: end; }
+label { display: block; font-size: .88rem; font-weight: 650; }
+select, button { border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: inherit; padding: 7px 10px; font: inherit; }
+select { width: 100%; margin-top: 6px; }
+input[type=range] { display: block; width: 100%; margin: 10px 0 0; accent-color: var(--accent); }
+output { color: var(--accent); font-variant-numeric: tabular-nums; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.chart-wrap { background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 12px 10px 8px; }
+svg { display: block; width: 100%; height: auto; }
+.legend { display: flex; flex-wrap: wrap; gap: 10px 18px; font-size: .85rem; color: var(--muted); margin: 8px 4px 2px; }
+.swatch { display: inline-block; width: 12px; height: 3px; vertical-align: middle; margin-right: 6px; border-radius: 2px; }
+.readout { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.card { background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+.card .k { font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.card .v { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92rem; font-weight: 600; margin-top: 3px; overflow-wrap: anywhere; }
+.note { margin: 14px 0 0; padding: 11px 13px; background: var(--tint); border-left: 3px solid var(--accent); border-radius: 3px; font-size: .93rem; }
+@media (max-width: 540px) {
+  main { padding: 14px; }
+  .controls { grid-template-columns: 1fr; }
+  .readout { grid-template-columns: 1fr; }
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #18212b;
+    --ink: #e5edf5;
+    --muted: #b1becb;
+    --line: #425368;
+    --grid: #273545;
+    --accent: #8ed4fc;
+    --accent2: #f4a261;
+    --tint: #223e52;
+    --soft: #202c39;
+    --ok: #6ad396;
+  }
+}
+</style>
+</head>
+<body>
+<main>
+<h1>Central-difference discrepancy versus step size &epsilon;</h1>
+<p class="muted">Compare the non-quadratic first-layer entry <code>W1[0, 0]</code> (through <code>tanh</code>) with the strictly quadratic output-layer entry <code>W2[0, 0]</code> on the seeded <code>float64</code> batch (<code>B=4, d=2, h=3</code>).</p>
+
+<div class="controls">
+  <div>
+    <label for="series">Parameter curve</label>
+    <select id="series">
+      <option value="W1_00" selected>W1[0, 0] · hidden layer (V-shaped curve)</option>
+      <option value="W2_00">W2[0, 0] · output layer (quadratic loss, no right wall)</option>
+      <option value="both">Overlay W1[0, 0] and W2[0, 0]</option>
+    </select>
+  </div>
+  <div>
+    <label for="step">Perturbation step &epsilon; = <output id="step-out" for="step">10⁻⁵</output></label>
+    <input id="step" type="range" min="-16" max="-1" step="1" value="-5">
+  </div>
+</div>
+
+<div class="chart-wrap">
+  <svg id="chart" viewBox="0 0 680 310" role="img" aria-label="Log-log plot of central-difference error versus step size"></svg>
+  <div class="legend" id="legend"></div>
+</div>
+
+<div class="readout" id="readout"></div>
+<p class="note" id="note" aria-live="polite"></p>
+</main>
+<script>
+(() => {
+  const DATA = {
+    baseline_loss: 2.2923205406218257,
+    W1_00: {
+      name: "W1[0, 0]",
+      analytic: 0.0004321482694442698,
+      rows: [
+        { exp: -1,  est: 0.0006670338421166377,  l1: 2.2928896194105004, l2: 2.292756212642077,  dl: 0.00013340676842332755, err: 0.00023488557267236797 },
+        { exp: -2,  est: 0.0004344906414210925,  l1: 2.2923298945577733, l2: 2.292321204744945,  dl: 8.68981282842185e-06,   err: 2.342371976822729e-06 },
+        { exp: -3,  est: 0.0004321716924327035,  l1: 2.292321022882342,  l2: 2.292320158538957,  dl: 8.64343384865407e-07,   err: 2.3422988433704182e-08 },
+        { exp: -4,  est: 0.0004321485058689234,  l1: 2.2923205843375642, l2: 2.292320497907863,  dl: 8.642970117378468e-08,  err: 2.3642465361763815e-10 },
+        { exp: -5,  est: 0.00043214827272208817, l1: 2.292320544948317,  l2: 2.2923205363053514, dl: 8.642965454441764e-09,  err: 3.2778183921451653e-12 },
+        { exp: -6,  est: 0.0004321483171310092,  l1: 2.292320541054024,  l2: 2.2923205401897273, dl: 8.642966342620184e-10,  err: 4.7686739431361536e-11 },
+        { exp: -7,  est: 0.00043214765099719443, l1: 2.292320540665041,  l2: 2.2923205405786113, dl: 8.642953019943889e-11,  err: 6.184470753437324e-10 },
+        { exp: -8,  est: 0.00043212100564460343, l1: 2.2923205406261467, l2: 2.2923205406175042, dl: 8.642420112892069e-12,  err: 2.726379966634749e-08 },
+        { exp: -9,  est: 0.00043232084578903596, l1: 2.2923205406222578, l2: 2.292320540621393,  dl: 8.646416915780719e-13,  err: 1.725763447661807e-07 },
+        { exp: -10, est: 0.00043298697960381105, l1: 2.2923205406218687, l2: 2.292320540621782,  dl: 8.659739592076221e-14,  err: 8.387101595412746e-07 },
+        { exp: -11, est: 0.0004440892098500626,  l1: 2.29232054062183,   l2: 2.2923205406218212, dl: 8.881784197001252e-15,  err: 1.194094040579284e-05 },
+        { exp: -12, est: 0.0004440892098500626,  l1: 2.2923205406218257, l2: 2.2923205406218248, dl: 8.881784197001252e-16,  err: 1.194094040579284e-05 },
+        { exp: -13, est: 0.0,                    l1: 2.2923205406218257, l2: 2.2923205406218257, dl: 0.0,                    err: 0.0004321482694442698 },
+        { exp: -14, est: 0.0,                    l1: 2.2923205406218257, l2: 2.2923205406218257, dl: 0.0,                    err: 0.0004321482694442698 },
+        { exp: -15, est: 0.0,                    l1: 2.2923205406218257, l2: 2.2923205406218257, dl: 0.0,                    err: 0.0004321482694442698 },
+        { exp: -16, est: 0.0,                    l1: 2.2923205406218257, l2: 2.2923205406218257, dl: 0.0,                    err: 0.0004321482694442698 }
+      ]
+    },
+    W2_00: {
+      name: "W2[0, 0]",
+      analytic: 2.3347362228568773,
+      rows: [
+        { exp: -1,  est: 2.334736222856877,  l1: 2.533438802170667,  l2: 2.0664915575992917, dl: 0.4669472445713754,     err: 4.440892098500626e-16 },
+        { exp: -2,  est: 2.33473622285687,   l1: 2.315744349243026,  l2: 2.2690496247858887, dl: 0.046694724457137404,   err: 7.105427357601002e-15 },
+        { exp: -3,  est: 2.334736222856959,  l1: 2.294656041308609,  l2: 2.289986568862895,  dl: 0.004669472445713918,   err: 8.171241461241152e-14 },
+        { exp: -4,  est: 2.3347362228554047, l1: 2.2925540218887503, l2: 2.2920870746441793, dl: 0.00046694724457108094, err: 1.4725998198628076e-12 },
+        { exp: -5,  est: 2.334736222842082,  l1: 2.2923438880605005, l2: 2.2922971933360436, dl: 4.669472445684164e-05,  err: 1.4795276115364686e-11 },
+        { exp: -6,  est: 2.334736222797673,  l1: 2.292322875358813,  l2: 2.2923182058863674, dl: 4.669472445595346e-06,  err: 5.920419710037095e-11 },
+        { exp: -7,  est: 2.3347362221315393, l1: 2.2923207740954554, l2: 2.292320307148211,  dl: 4.6694724442630786e-07, err: 7.253380118754649e-10 },
+        { exp: -8,  est: 2.3347362265724314, l1: 2.292320563969188,  l2: 2.2923205172744634, dl: 4.669472453144863e-08,  err: 3.7155540866251613e-09 },
+        { exp: -9,  est: 2.3347364042081153, l1: 2.2923205429565616, l2: 2.292320538287089,  dl: 4.669472808416231e-09,  err: 1.813512380266502e-07 },
+        { exp: -10, est: 2.334736848297325,  l1: 2.2923205408552993, l2: 2.292320540388352,  dl: 4.66947369659465e-10,   err: 6.254404478767128e-07 },
+        { exp: -11, est: 2.334754611865719,  l1: 2.292320540645173,  l2: 2.292320540598478,  dl: 4.6695092237314384e-11, err: 1.8389008841879217e-05 },
+        { exp: -12, est: 2.334576976181779,  l1: 2.29232054062416,   l2: 2.2923205406194906, dl: 4.669153952363558e-12,  err: 0.00015924667509814583 },
+        { exp: -13, est: 2.333688797762079,  l1: 2.292320540622059,  l2: 2.292320540621592,  dl: 4.667377595524158e-13,  err: 0.001047425094798271 },
+        { exp: -14, est: 2.3092638912203256, l1: 2.2923205406218488, l2: 2.2923205406218026, dl: 4.618527782440651e-14,  err: 0.025472331636551715 },
+        { exp: -15, est: 2.4424906541753444, l1: 2.292320540621828,  l2: 2.292320540621823,  dl: 4.884981308350689e-15,  err: 0.10775443131846707 },
+        { exp: -16, est: 4.440892098500626,  l1: 2.2923205406218257, l2: 2.2923205406218248, dl: 8.881784197001252e-16,  err: 2.106155875643749 }
+      ]
+    }
+  };
+
+  const SUP = { '-': '⁻', '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹' };
+  const pow10 = e => '10' + String(e).split('').map(c => SUP[c] || c).join('');
+  const sci = v => v === 0 ? '0' : v.toExponential(3);
+
+  const svg = document.getElementById('chart');
+  const seriesSel = document.getElementById('series');
+  const stepInput = document.getElementById('step');
+  const stepOut = document.getElementById('step-out');
+  const legendEl = document.getElementById('legend');
+  const readoutEl = document.getElementById('readout');
+  const noteEl = document.getElementById('note');
+
+  const W = 680, H = 310;
+  const M = { top: 20, right: 24, bottom: 44, left: 68 };
+  const PW = W - M.left - M.right;
+  const PH = H - M.top - M.bottom;
+  const xMin = -16, xMax = -1;
+  const yMin = -16, yMax = 1;
+
+  const sx = exp => M.left + ((exp - xMin) / (xMax - xMin)) * PW;
+  const sy = logErr => M.top + ((yMax - logErr) / (yMax - yMin)) * PH;
+
+  const ns = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs = {}, text = '') => {
+    const n = document.createElementNS(ns, tag);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    if (text) n.textContent = text;
+    return n;
+  };
+
+  function render() {
+    const mode = seriesSel.value;
+    const exp = Number(stepInput.value);
+    stepOut.value = pow10(exp);
+
+    svg.replaceChildren();
+
+    // Gridlines
+    for (let y = -16; y <= 0; y += 2) {
+      const py = sy(y);
+      svg.append(el('line', { x1: M.left, x2: W - M.right, y1: py, y2: py, stroke: 'var(--grid)', 'stroke-width': 1 }));
+      svg.append(el('text', { x: M.left - 8, y: py + 4, 'text-anchor': 'end', fill: 'var(--muted)', 'font-size': 11 }, pow10(y)));
+    }
+    for (let x = -16; x <= -1; x += 3) {
+      const px = sx(x);
+      svg.append(el('line', { x1: px, x2: px, y1: M.top, y2: H - M.bottom, stroke: 'var(--grid)', 'stroke-width': 1 }));
+      svg.append(el('text', { x: px, y: H - M.bottom + 18, 'text-anchor': 'middle', fill: 'var(--muted)', 'font-size': 11 }, pow10(x)));
+    }
+    svg.append(el('line', { x1: sx(-1), x2: sx(-1), y1: M.top, y2: H - M.bottom, stroke: 'var(--grid)', 'stroke-width': 1 }));
+
+    // Axes frame
+    svg.append(el('rect', { x: M.left, y: M.top, width: PW, height: PH, fill: 'none', stroke: 'var(--line)', 'stroke-width': 1 }));
+    svg.append(el('text', { x: M.left + PW / 2, y: H - 6, 'text-anchor': 'middle', fill: 'var(--muted)', 'font-size': 12 }, 'Perturbation step size ε (log scale)'));
+    svg.append(el('text', { x: 16, y: M.top + PH / 2, 'text-anchor': 'middle', fill: 'var(--muted)', 'font-size': 12, transform: `rotate(-90 16 ${M.top + PH / 2})` }, '|central diff − analytic| (log scale)'));
+
+    // Tolerance reference line at 1e-9
+    const tolY = sy(-9);
+    svg.append(el('line', { x1: M.left, x2: W - M.right, y1: tolY, y2: tolY, stroke: 'var(--ok)', 'stroke-width': 1.2, 'stroke-dasharray': '5 4' }));
+    svg.append(el('text', { x: W - M.right - 4, y: tolY - 5, 'text-anchor': 'end', fill: 'var(--ok)', 'font-size': 10.5 }, 'tolerance 10⁻⁹'));
+
+    // Vertical cursor
+    const cx = sx(exp);
+    svg.append(el('line', { x1: cx, x2: cx, y1: M.top, y2: H - M.bottom, stroke: 'var(--muted)', 'stroke-width': 1, 'stroke-dasharray': '3 3' }));
+
+    // Slope guide labels for W1
+    if (mode !== 'W2_00') {
+      svg.append(el('text', { x: sx(-2.6), y: sy(-5.2), fill: 'var(--accent)', 'font-size': 10.5, 'text-anchor': 'middle' }, 'truncation ~ ε²'));
+      svg.append(el('text', { x: sx(-9.3), y: sy(-8.2), fill: 'var(--accent)', 'font-size': 10.5, 'text-anchor': 'middle' }, 'roundoff ~ u / ε'));
+    }
+
+    const active = mode === 'both' ? [['W1_00', 'var(--accent)'], ['W2_00', 'var(--accent2)']] : [[mode, mode === 'W1_00' ? 'var(--accent)' : 'var(--accent2)']];
+
+    for (const [key, color] of active) {
+      const rows = DATA[key].rows;
+      const pts = rows.map(r => `${sx(r.exp).toFixed(1)},${sy(Math.log10(r.err)).toFixed(1)}`).join(' ');
+      svg.append(el('polyline', { points: pts, fill: 'none', stroke: color, 'stroke-width': 2.2 }));
+      for (const r of rows) {
+        const isSel = r.exp === exp;
+        svg.append(el('circle', {
+          cx: sx(r.exp),
+          cy: sy(Math.log10(r.err)),
+          r: isSel ? 5.5 : 3.2,
+          fill: isSel ? color : 'var(--bg)',
+          stroke: color,
+          'stroke-width': 2
+        }));
+      }
+    }
+
+    // Legend
+    legendEl.replaceChildren();
+    for (const [key, color] of active) {
+      const item = document.createElement('span');
+      const sw = document.createElement('span');
+      sw.className = 'swatch';
+      sw.style.background = color;
+      item.append(sw, `${DATA[key].name} (analytic = ${DATA[key].analytic.toPrecision(6)})`);
+      legendEl.append(item);
+    }
+
+    // Readout cards
+    const primaryKey = mode === 'W2_00' ? 'W2_00' : 'W1_00';
+    const row = DATA[primaryKey].rows.find(r => r.exp === exp);
+    const cards = mode === 'both'
+      ? (() => {
+          const r1 = DATA.W1_00.rows.find(r => r.exp === exp);
+          const r2 = DATA.W2_00.rows.find(r => r.exp === exp);
+          return [
+            ['Step size ε', pow10(exp)],
+            ['W1[0, 0] |error|', sci(r1.err)],
+            ['W2[0, 0] |error|', sci(r2.err)]
+          ];
+        })()
+      : [
+          ['Analytic gradient', DATA[primaryKey].analytic.toPrecision(10)],
+          ['Central-diff estimate', row.est === 0 ? '0.0 (cancelled)' : row.est.toPrecision(10)],
+          ['Absolute discrepancy', sci(row.err)],
+          ['L(θ + ε)', row.l1.toPrecision(16)],
+          ['L(θ − ε)', row.l2.toPrecision(16)],
+          ['L(θ + ε) − L(θ − ε)', sci(row.dl)]
+        ];
+
+    readoutEl.replaceChildren(...cards.map(([k, v]) => {
+      const c = document.createElement('div');
+      c.className = 'card';
+      const ke = document.createElement('div');
+      ke.className = 'k';
+      ke.textContent = k;
+      const ve = document.createElement('div');
+      ve.className = 'v';
+      ve.textContent = v;
+      c.append(ke, ve);
+      return c;
+    }));
+
+    // Contextual explanation
+    if (mode === 'W2_00') {
+      if (exp >= -2) {
+        noteEl.textContent = `At ε = ${pow10(exp)}, W2[0, 0] reaches ${sci(row.err)} error. Holding H fixed makes L strictly quadratic in W2, so f''' = 0 and exact-arithmetic truncation error vanishes.`;
+      } else if (exp <= -13) {
+        noteEl.textContent = `At ε = ${pow10(exp)}, subtracting two nearly identical float64 losses amplifies rounding error when divided by 2ε, driving the discrepancy to ${sci(row.err)}.`;
+      } else {
+        noteEl.textContent = `At ε = ${pow10(exp)}, only roundoff error ~ u / ε is present for W2[0, 0], so error grows roughly 10× for each decade ε shrinks.`;
+      }
+    } else if (mode === 'both') {
+      const r1 = DATA.W1_00.rows.find(r => r.exp === exp);
+      const r2 = DATA.W2_00.rows.find(r => r.exp === exp);
+      noteEl.textContent = `At ε = ${pow10(exp)}: W1[0, 0] error is ${sci(r1.err)} and W2[0, 0] error is ${sci(r2.err)}. Notice that ε = 10⁻⁵ minimizes error across non-quadratic hidden weights while keeping quadratic output weights well below 10⁻⁹.`;
+    } else {
+      if (exp >= -4) {
+        noteEl.textContent = `Truncation-dominated regime (ε = ${pow10(exp)}): shrinking ε by 10× cuts the discrepancy by roughly 100×, matching the O(ε²) remainder of central differences.`;
+      } else if (exp === -5) {
+        noteEl.textContent = `Optimal trade-off (ε = 10⁻⁵): truncation error O(ε²) and roundoff error O(u / ε) balance near u^(1/3) ≈ 5×10⁻⁶, reaching a discrepancy of 3.28×10⁻¹².`;
+      } else if (exp >= -12) {
+        noteEl.textContent = `Roundoff-dominated regime (ε = ${pow10(exp)}): L(θ + ε) and L(θ − ε) agree in their leading digits, so subtraction loses precision and dividing by 2ε amplifies rounding noise.`;
+      } else {
+        noteEl.textContent = `Catastrophic cancellation (ε = ${pow10(exp)}): L(θ + ε) and L(θ − ε) round to the exact same float64 value (${row.l1}), collapsing the difference quotient to 0.`;
+      }
+    }
+  }
+
+  seriesSel.addEventListener('change', render);
+  stepInput.addEventListener('input', render);
+  render();
+})();
+</script>
+</body>
+</html>

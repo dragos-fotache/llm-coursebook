@@ -14,6 +14,8 @@ The chapters grow out of the learning sessions. Each brings together the explana
 [Unit 4: Vector and matrix derivatives](units/04-vector-matrix-derivatives.qmd) is complete. It develops backward rules for batched affine layers, elementwise activations, and sum and mean reductions. The final checkpoint traces a scalar loss back through a batched layer and shows how to compute the gradients directly.
 
 [Unit 5: Explicit network backward pass](units/05-network-backward-pass.qmd) is complete. It composes the two-layer backward equations, identifies the minimal forward cache, implements the forward pass, mean squared error, and explicit backward pass in NumPy, connects batched matrix products to averaged single-example gradients, and maps every line of `backward` to the computation graph.
+
+[Unit 6: Gradient verification and PyTorch](units/06-gradient-verification.qmd) is complete. It derives and measures the central-difference trade-off between truncation error and floating-point roundoff, checks all 13 parameters with justified tolerances, verifies the NumPy backward pass against PyTorch autograd, explains gradient accumulation and `torch.no_grad()`, and uses checker discrepancies to diagnose backward-pass bugs.
 :::
 
 ## Reading this book

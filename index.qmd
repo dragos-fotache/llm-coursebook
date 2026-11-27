@@ -16,6 +16,8 @@ The chapters grow out of the learning sessions. Each brings together the explana
 [Unit 5: Explicit network backward pass](units/05-network-backward-pass.qmd) is complete. It composes the two-layer backward equations, identifies the minimal forward cache, implements the forward pass, mean squared error, and explicit backward pass in NumPy, connects batched matrix products to averaged single-example gradients, and maps every line of `backward` to the computation graph.
 
 [Unit 6: Gradient verification and PyTorch](units/06-gradient-verification.qmd) is complete. It derives and measures the central-difference trade-off between truncation error and floating-point roundoff, checks all 13 parameters with justified tolerances, verifies the NumPy backward pass against PyTorch autograd, explains gradient accumulation and `torch.no_grad()`, and uses checker discrepancies to diagnose backward-pass bugs.
+
+[Unit 7: Training and diagnosis](units/07-training-and-diagnosis.qmd) is **in progress** (recorded through Exercise 3). It connects verified gradients to full-batch gradient descent on $y = \sin(x)$, checks the step-0 local linear prediction ratio and all-zero initialization, proves exact odd-symmetry bias invariance, compares linear and nonlinear capacity, and runs controlled learning-rate and `tanh` saturation experiments. The closing diagnostic checkpoint is ahead.
 :::
 
 ## Reading this book

@@ -1,0 +1,292 @@
+# Training and diagnosis
+
+<p class="chapter-kicker">Milestone 1 · Unit 7 · In progress (recorded through Exercise 3, 27 November 2026)</p>
+
+::: {.callout-important title="Chapter in progress"}
+This chapter currently covers Exercises 1–3: the full-batch gradient-descent loop, step-0 local linear verification, all-zero initialization, odd-symmetry bias invariance, linear versus nonlinear model capacity, learning-rate regimes, and `tanh` activation saturation. The closing diagnostic checkpoint (distinguishing derivative bugs from optimization and initialization failures) will be added once completed.
+:::
+
+Unit 6 established that the explicit NumPy backward pass in [mlp_numpy.py](../assets/mlp_numpy.py) agrees with central differences to $\le 4.55 \times 10^{-11}$ and with PyTorch autograd to $\le 4.44 \times 10^{-16}$. In this unit, those verified gradients drive an iterative training loop on a small nonlinear regression task, and controlled experiments isolate how initialization, symmetry, nonlinearity, learning rate, and saturation govern training behavior even when every derivative is exact.
+
+> How do we turn verified gradients into a training loop, what separates gradient computation from parameter updates, and why can training still fail when every derivative is mathematically exact?
+
+## Separating gradient computation from parameter updates
+
+Collect all four parameter arrays $(W_1, b_1, W_2, b_2)$ conceptually into one vector $\theta \in \mathbb{R}^P$. Each iteration $t = 0, 1, 2, \dots$ of **full-batch gradient descent** consists of two distinct stages:
+
+1. **Gradient computation (backpropagation):** evaluate the loss $L(\theta^{(t)})$ and exact parameter gradient $g^{(t)} = \nabla_\theta L(\theta^{(t)})$ on the dataset $(X, Y)$ without modifying any parameters.
+2. **Parameter update (optimization):** move each parameter array opposite its gradient, scaled by a learning rate $\eta > 0$:
+
+$$
+\theta^{(t+1)} = \theta^{(t)} - \eta\, g^{(t)},
+$$
+
+written per array as
+
+$$
+W_1 \leftarrow W_1 - \eta\, G_{W_1}, \qquad
+b_1 \leftarrow b_1 - \eta\, G_{b_1}, \qquad
+W_2 \leftarrow W_2 - \eta\, G_{W_2}, \qquad
+b_2 \leftarrow b_2 - \eta\, G_{b_2}.
+$$
+
+Backpropagation answers *"which direction is downhill right here, and how steep is the surface?"* The optimizer decides *"how far to move, and how to turn gradient information into a parameter update."* Keeping the two responsibilities separate allows swapping vanilla gradient descent for momentum or Adam later without touching `backward`.
+
+### Global gradient norm and first-order loss prediction
+
+From Unit 1, any small parameter displacement $\Delta \theta$ produces a first-order loss change $\Delta L \approx \nabla_\theta L(\theta)^\top \Delta \theta$. Substituting the gradient-descent step $\Delta \theta = -\eta\, g^{(t)}$ gives
+
+$$
+\Delta L_{\text{pred}} = (g^{(t)})^\top (-\eta\, g^{(t)}) = -\eta\, \|g^{(t)}\|_2^2,
+$$
+
+where the squared global Euclidean norm sums squared entries across all four gradient arrays:
+
+$$
+\|g\|_2^2 = \|G_{W_1}\|_F^2 + \|G_{b_1}\|_2^2 + \|G_{W_2}\|_F^2 + \|G_{b_2}\|_2^2,
+\qquad
+\|A\|_F^2 = \sum_{i,j} A_{ij}^2.
+$$
+
+Evaluating the ratio
+
+$$
+r(\eta) = \frac{L(\theta^{(0)} - \eta g^{(0)}) - L(\theta^{(0)})}{-\eta\, \|g^{(0)}\|_2^2}
+$$
+
+provides a sharper check than inspecting the raw difference alone: the raw difference goes to $0$ as $\eta \to 0$ even if the slope is wrong, whereas $r(\eta) \to 1$ as $\eta \to 0$ specifically confirms that the first-order decrease matches $-\|g^{(0)}\|_2^2$.
+
+### The regression task
+
+We fit a smooth, non-monotonic 1D target with two turning points:
+
+$$
+x \in [-\pi, \pi], \qquad y = \sin(x),
+$$
+
+sampled on $B = 64$ evenly spaced points (`X` and `Y` of shape `(64, 1)`), with input width $d = 1$ and hidden width $h = 8$. The network has $P = 1 \cdot 8 + 8 + 8 \cdot 1 + 1 = 25$ scalar parameters:
+
+| Array | Shape | Role |
+|---|---|---|
+| `X`, `Y`, `Y_hat` | `(64, 1)` | Inputs, targets, predictions |
+| `W1`, `b1` | `(1, 8)`, `(8,)` | Hidden-layer weights and biases |
+| `W2`, `b2` | `(8, 1)`, `(1,)` | Output-layer weights and bias |
+
+All numerical results in this chapter are reproduced by the standalone script [train_experiments.py](../assets/train_experiments.py).
+
+### Exercise 1: first training loop, step-0 ratio, and zero initialization
+
+1. Initialize `W1` and `W2` from $\mathcal{N}(0, 0.5^2)$ (`default_rng(0)`), set `b1` and `b2` to zeros, and run 2,000 steps of full-batch gradient descent at $\eta = 0.1$, logging loss, $\|g\|_2$, and all four per-array gradient norms.
+2. From the initial parameters $\theta^{(0)}$, compare $\Delta L_{\text{pred}} = -\eta \|g^{(0)}\|_2^2$ against $\Delta L_{\text{actual}} = L(\theta^{(1)}) - L(\theta^{(0)})$ at $\eta = 0.1$ and at $\eta = 10^{-4}$, and explain the behavior of the ratio $r(\eta)$.
+3. Trace `forward` and `backward` analytically when all four parameter arrays (`W1`, `b1`, `W2`, `b2`) are initialized to zero. Distinguish what happens on $y = \sin(x)$ from a general dataset with $\operatorname{mean}(Y) \neq 0$.
+
+::: {.callout-note collapse="true" title="Worked solution: baseline training loop, step-0 ratio, and zero initialization"}
+**1. Baseline training run (`b1 = 0`, `b2 = 0`, $\eta = 0.1$, `default_rng(0)`):**
+
+```python
+for step in range(steps):
+    Y_hat, cache = net.forward(X, params)
+    loss, E = net.mse_loss(Y_hat, Y)
+    grads = net.backward(E, cache, params)
+    for k in params:
+        params[k] -= eta * grads[k]
+```
+
+| Step | MSE loss | $\|g\|_2$ | $\|G_{W_1}\|_F$ | $\|G_{b_1}\|_2$ | $\|G_{W_2}\|_F$ | $\|G_{b_2}\|_2$ |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0 | `1.043470` | `4.353526` | `3.7276` | `2.11e-16` | `2.2491` | `7.63e-17` |
+| 1 | `0.152009` | `0.336859` | `0.3230` | `8.98e-17` | `0.0957` | `9.02e-17` |
+| 10 | `0.099574` | `0.201987` | `0.1906` | `4.16e-17` | `0.0669` | `6.25e-17` |
+| 100 | `0.026924` | `0.032777` | `0.0177` | `1.64e-17` | `0.0276` | `0.00e+00` |
+| 500 | `0.012380` | `0.012077` | `0.0066` | `2.61e-16` | `0.0101` | `1.87e-16` |
+| 1000 | `0.008246` | `0.006935` | `0.0018` | `1.20e-16` | `0.0067` | `9.02e-17` |
+| 2000 | `0.006520` | `0.010864` | `0.0098` | `3.39e-17` | `0.0048` | `1.39e-17` |
+
+**2. Step-0 local linear prediction ratio:**
+
+| $\eta$ | $L(\theta^{(0)})$ | $L(\theta^{(1)})$ | $\Delta L_{\text{pred}} = -\eta\|g^{(0)}\|_2^2$ | $\Delta L_{\text{actual}}$ | Ratio $\Delta L_{\text{actual}} / \Delta L_{\text{pred}}$ |
+|---:|---:|---:|---:|---:|---:|
+| `0.1` | `1.043470` | `0.152009` | `-1.895319` | `-0.891461` | `0.470349` |
+| `1e-4` | `1.043470` | `1.041576` | `-1.895319e-03` | `-1.894070e-03` | `0.999341` |
+
+At $\eta = 0.1$, the tangent hyperplane in $\mathbb{R}^{25}$ extrapolates past zero loss (predicting $1.043 - 1.895 = -0.852$), because curvature is large over a step of length $0.1 \times 4.354 \approx 0.435$. Shrinking the step to $\eta = 10^{-4}$ keeps the update inside the locally linear neighborhood, and the ratio approaches $1$ (`0.999341`).
+
+**3. All-zero initialization (`W1 = 0`, `b1 = 0`, `W2 = 0`, `b2 = 0`):**
+
+Tracing `forward` and `backward` at step 0:
+
+$$
+Z_1 = 0, \qquad H = \tanh(0) = 0, \qquad \hat{Y} = 0, \qquad E = -Y, \qquad G_{\hat{Y}} = -\frac{2}{B} Y.
+$$
+
+Then:
+
+- $G_{W_2} = H^\top G_{\hat{Y}} = 0$ because $H = 0$.
+- $G_H = G_{\hat{Y}} W_2^\top = 0$ because $W_2 = 0$, which forces $G_{Z_1} = 0$, $G_{W_1} = 0$, and $G_{b_1} = 0$.
+- Only the output bias gradient can be nonzero:
+
+$$
+G_{b_2} = \sum_{r=1}^B G_{\hat{Y}, r} = -\frac{2}{B} \sum_{r=1}^B Y_r = -2\operatorname{mean}(Y).
+$$
+
+On $y = \sin(x)$ over $[-\pi, \pi]$, $\operatorname{mean}(Y) = 0$, so $G_{b_2} = 0$ as well and every parameter stays at $0$ forever (`loss = 0.4922`). On a shifted dataset such as $y = \sin(x) + 1$, $G_{b_2} = -2.0$, so $b_2$ moves toward the constant mean predictor $\operatorname{mean}(Y) = 1$, while `W1`, `b1`, and `W2` remain permanently trapped at $0$ because $H = 0$ and $W_2 = 0$ mutually block each other's gradients on every subsequent step.
+:::
+
+## Odd symmetry and model capacity
+
+In the Exercise 1 table above, `||G_b1||` and `||G_b2||` stay around $10^{-16}$–$10^{-17}$ for all 2,000 steps even though `W1` and `W2` are random and nonzero. That is not numerical coincidence—it is an exact algebraic invariant of the problem and initialization.
+
+### Exercise 2: odd-symmetry bias invariance and linear collapse
+
+1. Using `forward` and `backward`, prove why $G_{b_1} = 0$ and $G_{b_2} = 0$ identically at every step when `b1 = 0`, `b2 = 0`, `X` is symmetric on $[-\pi, \pi]$, and `Y = sin(X)`. Then initialize `b1` from $\mathcal{N}(0, 0.5^2)$ and compare bias gradient norms and final loss over 2,000 steps at $\eta = 0.1$.
+2. Remove `tanh` from the two-layer network while keeping $h = 8$ ($25$ parameters):
+   $$
+   H = X W_1 + b_1, \qquad \hat{Y} = H W_2 + b_2.
+   $$
+   Simplify $\hat{Y}$ algebraically as a function of $X$, derive the modified `backward_linear`, train it on the same dataset, and compare its final MSE and gradient norm against the `tanh` network.
+
+::: {.callout-note collapse="true" title="Worked solution: odd symmetry and two-layer linear collapse"}
+**1. Exact odd-function symmetry proof:**
+
+A function $f$ is **odd** if $f(-x) = -f(x)$ and **even** if $f(-x) = f(x)$. Both $\sin$ and $\tanh$ are odd, and the grid `X` pairs every point $+x$ with $-x$. Whenever $b_1 = 0$ and $b_2 = 0$ (for **any** weight matrices $W_1, W_2$):
+
+- $Z_1(-x) = (-x) W_1 = -Z_1(x)$ *(odd)*
+- $H(-x) = \tanh(-Z_1(x)) = -\tanh(Z_1(x)) = -H(x)$ *(odd, since $\tanh$ is odd)*
+- $\hat{Y}(-x) = H(-x) W_2 = -\hat{Y}(x)$ *(odd)*
+- $E(-x) = \hat{Y}(-x) - \sin(-x) = -E(x)$ *(odd)*
+
+Propagating through `backward`:
+
+- $G_{\hat{Y}}(-x) = \frac{2}{B} E(-x) = -G_{\hat{Y}}(x)$ is odd, so summing across all paired rows $(+x, -x)$ gives $G_{b_2} = \sum_{r=1}^B G_{\hat{Y}, r} = 0$ identically.
+- $G_H(-x) = G_{\hat{Y}}(-x) W_2^\top = -G_H(x)$ is odd.
+- The local activation derivative $1 - H(-x)^2 = 1 - (-H(x))^2 = 1 - H(x)^2$ is **even**.
+- Multiplying odd by even yields an odd function: $G_{Z_1}(-x) = G_H(-x)\bigl(1 - H(-x)^2\bigr) = -G_{Z_1}(x)$. Summing across rows gives $G_{b_1} = \sum_{r=1}^B G_{Z_1, r} = 0$ identically.
+
+Because both bias gradients vanish up to floating-point roundoff ($\sim 10^{-16}$), $b_1$ and $b_2$ remain zero on every step, restricting every hidden unit $\tanh(w_{1,j} x)$ to be centered at $x = 0$. Initializing $b_1 \sim \mathcal{N}(0, 0.5^2)$ breaks the symmetry so hidden transitions can shift toward the turning points $\pm\pi/2$:
+
+| Model (2,000 steps, $\eta = 0.1$) | Initial MSE | Final MSE | Final $\|g\|_2$ |
+|---|---:|---:|---:|
+| `tanh` MLP (`b1 = 0`, odd symmetry) | `1.043470` | `0.006520` | `1.09e-02` |
+| `tanh` MLP (`b1 ~ N(0, 0.5^2)`) | `0.329989` | `0.001065` | `3.15e-03` |
+| Linear 2-layer MLP (no `tanh`, $h=8$) | `0.419048` | `0.207184` | `9.39e-17` |
+
+Breaking the bias symmetry cuts the 2,000-step MSE by more than $6\times$ (`0.006520` down to `0.001065`).
+
+**2. Algebraic collapse of a two-layer linear network:**
+
+Substituting $H = X W_1 + b_1$ into $\hat{Y} = H W_2 + b_2$ gives
+
+$$
+\hat{Y} = (X W_1 + b_1) W_2 + b_2 = X\underbrace{(W_1 W_2)}_{W_{\text{eff}}\;(1\times 1)} + \underbrace{(b_1 W_2 + b_2)}_{b_{\text{eff}}\;(1,)}.
+$$
+
+Notice the order $b_1 W_2$: $b_1$ has shape `(h,)` (row-broadcast `(1, h)`) and $W_2$ has shape `(h, 1)`, so $b_1 W_2$ has shape `(1,)`, matching $b_2$. Regardless of width $h$ or depth, composing affine layers without a nonlinearity produces only a single affine map (a straight line in 1D).
+
+In `backward_linear`, caching `Z_1` instead of `H` removes the elementwise factor $(1 - H^2)$:
+
+```python
+G_Yhat = (2 / B) * E
+G_W2 = Z_1.T @ G_Yhat
+G_b2 = G_Yhat.sum(axis=0)
+G_Z1 = G_Yhat @ W2.T
+G_W1 = X.T @ G_Z1
+G_b1 = G_Z1.sum(axis=0)
+```
+
+Training this 25-parameter linear network converges rapidly to MSE `0.2071844750484685` with total gradient norm `9.39e-17`—the exact global minimum MSE achievable by any straight line on these 64 points—roughly $200\times$ worse than the `tanh` network.
+:::
+
+## Interactive explorer: controlled training dynamics
+
+Switch between the learning-rate runs, odd symmetry, the two-layer linear model, and saturated initialization, then drag the step slider to see how $\hat{Y}(x)$, the log-scale loss curve, gradient norms, and `tanh` derivatives evolve together.
+
+~~~{=html}
+<iframe class="interactive-frame" data-auto-height="true" title="Interactive training experiments on y = sin(x)" src="../assets/training-experiments.html" loading="lazy"></iframe>
+~~~
+
+<p class="interactive-caption">Exact `float64` trajectories produced by <a href="../assets/train_experiments.py" target="_blank" rel="noopener">train_experiments.py</a> on 64 points over $[-\pi, \pi]$. <a href="../assets/training-experiments.html" target="_blank" rel="noopener">Open the interactive figure separately.</a></p>
+
+## Controlled optimization experiments
+
+In both parts of Exercise 3, the backward pass is unchanged and exact to $10^{-16}$. Only one experimental variable changes at a time, starting from the same seeded initializer (`w1_scale=0.5`, `b1_scale=0.5`, `W2 ~ N(0, 0.5^2)`, `b2=0`, `default_rng(0)`).
+
+### Exercise 3A: learning-rate sweep and the local quadratic bound
+
+Run 500 steps from identical initial parameters for $\eta \in \{0.005,\; 0.1,\; 0.4,\; 0.6\}$, stopping early if the loss becomes non-finite or exceeds $10^6$. Characterize all four behaviors and explain mathematically why $\eta = 0.6$ climbs higher on every bounce rather than landing lower by chance.
+
+::: {.callout-note collapse="true" title="Worked solution: four learning-rate regimes and exponential divergence"}
+| $\eta$ | Steps run | Step-0 loss | Step-1 loss | Final loss | Regime |
+|---:|---:|---:|---:|---:|---|
+| `0.005` | 500 | `0.329989` | `0.320450` | `0.131008` | Smooth descent, too slow |
+| `0.1` | 500 | `0.329989` | `0.202071` | `0.009592` | Well-tuned smooth convergence |
+| `0.4` | 500 | `0.329989` | `0.506256` | `0.046502` | Step-1 overshoot and valley oscillation |
+| `0.6` | 10 | `0.329989` | `1.140866` | `5.777e+06` | Exponential divergence |
+
+**Why divergence feeds on itself:**
+
+Near a curved valley minimum $\theta_*$ with local curvature $c > 0$, the loss along that direction behaves locally like a quadratic bowl:
+
+$$
+L(\theta) = \frac{1}{2} c (\theta - \theta_*)^2, \qquad g(\theta) = c(\theta - \theta_*).
+$$
+
+Writing $d_t = \theta_t - \theta_*$ for the signed displacement from the minimum, one gradient-descent step updates $d_t$ to
+
+$$
+d_{t+1} = d_t - \eta\, c\, d_t = (1 - \eta c)\, d_t.
+$$
+
+The single factor $(1 - \eta c)$ governs all four regimes:
+
+1. **$0 < \eta c < 1$ (`0.005`, `0.1`):** $d_t$ shrinks monotonically on the same side of the valley.
+2. **$1 < \eta c < 2$ (`0.4`):** $1 - \eta c \in (-1, 0)$, so the iterate jumps past the bottom onto the opposite wall, oscillating back and forth. On a curved nonlinear surface, an initial overshoot can jump to a steeper region (`0.330 -> 0.506`) before settling into persistent oscillations.
+3. **$\eta c > 2$ (`0.6`):** $|1 - \eta c| > 1$. Each bounce lands **strictly farther** up the opposite wall, where the slope $c d_t$ is strictly steeper, generating an even larger step back across. Because $|d_t| = |1 - \eta c|^t |d_0|$ grows geometrically, the loss climbs systematically until overflow rather than stumbling onto a lower region.
+:::
+
+### Exercise 3B: activation saturation and frozen step transitions
+
+Fix $\eta = 0.1$ and compare `w1_scale = 0.5` against `w1_scale = 20.0` over 500 steps. Measure step-0 `mean(1 - H^2)`, the saturated fraction `mean(|H| > 0.99)`, `||G_W1||`, and `||G_W2||`. Explain:
+
+1. Why `w1_scale = 20.0` crushes `||G_W1||` while making `||G_W2||` *larger* than in the normal run.
+2. Why the saturated model's final prediction curve is flat away from the origin and wiggles only near $x = 0$.
+
+::: {.callout-note collapse="true" title="Worked solution: saturation gradient asymmetry and transition clustering"}
+| `w1_scale` | Step-0 loss | Step-500 loss | Step-0 $\operatorname{mean}(1 - H^2)$ | Step-0 frac($|H| > 0.99$) | Step-0 $\|G_{W_1}\|_F$ | Step-0 $\|G_{W_2}\|_F$ |
+|---:|---:|---:|---:|---:|---:|---:|
+| `0.5` | `0.329989` | `0.009592` | `0.7003` | `0.0020` (0.2%) | `0.9367` | `0.9220` |
+| `20.0` | `0.335174` | `0.070463` | `0.0646` | `0.8262` (82.6%) | `0.0314` | `2.7483` |
+
+**1. Why Layer 1 gradients collapse while Layer 2 gradients grow:**
+
+Large `W1` pushes pre-activations $Z_1 = X W_1 + b_1$ far outside $[-2, 2]$, saturating $82.6\%$ of hidden entries near $\pm 1$:
+
+- In the output layer, $G_{W_2} = H^\top G_{\hat{Y}}$ uses $H$ directly without any $(1 - H^2)$ factor. Saturated entries have near-maximum magnitude $|H_{rj}| \approx 1$, so $\|G_{W_2}\|_F$ jumps roughly $3\times$ (`0.922 -> 2.748`).
+- In the hidden layer, $G_{Z_1} = G_H \odot (1 - H^2)$ multiplies every saturated entry by $1 - H_{rj}^2 \approx 0$ (`mean = 0.0646`), shrinking $\|G_{W_1}\|_F$ by roughly $30\times$ (`0.937 -> 0.0314`) and starving Layer 1 of updates.
+
+**2. Why the prediction is flat away from $0$ and wiggles near $x = 0$:**
+
+Each hidden unit $j$ computes $\tanh(w_{1,j} x + b_{1,j})$. For large $|w_{1,j}|$, this behaves like a sharp step switching between $-1$ and $+1$ at its zero crossing:
+
+$$
+w_{1,j} x + b_{1,j} = 0 \quad\Longrightarrow\quad x_j^* = -\frac{b_{1,j}}{w_{1,j}}.
+$$
+
+With $b_1$ scaled at $0.5$ and $W_1$ scaled at $20.0$, all eight transition points cluster tightly around the origin:
+
+| Unit $j$ | $w_{1,j}$ | $b_{1,j}$ | Transition $x_j^* = -b_{1,j}/w_{1,j}$ |
+|---:|---:|---:|---:|
+| 0 | `+2.515` | `-0.352` | `+0.1399` |
+| 1 | `-2.642` | `-0.633` | `-0.2395` |
+| 2 | `+12.808` | `-0.312` | `+0.0243` |
+| 3 | `+2.098` | `+0.021` | `-0.0098` |
+| 4 | `-10.713` | `-1.163` | `-0.1085` |
+| 5 | `+7.232` | `-0.109` | `+0.0151` |
+| 6 | `+26.080` | `-0.623` | `+0.0239` |
+| 7 | `+18.942` | `-0.366` | `+0.0193` |
+
+Every transition sits inside $[-0.24, +0.14]$—nowhere near the turning points of $\sin(x)$ at $\pm\pi/2 \approx \pm 1.57$, where all eight units are already flat at $\pm 1$. Because saturation freezes Layer 1, those transition points cannot migrate outward. Layer 2 (`W2`, `b2`) still receives healthy gradients and fits the best linear combination it can of eight frozen step functions clustered at $x \approx 0$, leaving flat plateaus on both sides and a sharp wiggle around the origin where the slightly offset transitions overlap with opposite output weights.
+:::
+
+## Ahead: closing diagnostic checkpoint
+
+The final section of Unit 7 (to be completed in the next session) will synthesize the complete training cycle and diagnose failing runs—distinguishing a **derivative bug** from an **optimization** or **initialization/saturation** problem using measurements beyond whether the loss decreases.

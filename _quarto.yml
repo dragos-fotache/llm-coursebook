@@ -25,6 +25,7 @@ book:
         - units/04-vector-matrix-derivatives.qmd
         - units/05-network-backward-pass.qmd
         - units/06-gradient-verification.qmd
+        - units/07-training-and-diagnosis.qmd
   appendices:
     - reference.qmd
 

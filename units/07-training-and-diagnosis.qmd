@@ -1,10 +1,6 @@
 # Training and diagnosis
 
-<p class="chapter-kicker">Milestone 1 · Unit 7 · In progress (recorded through Exercise 3, 27 November 2026)</p>
-
-::: {.callout-important title="Chapter in progress"}
-This chapter currently covers Exercises 1–3: the full-batch gradient-descent loop, step-0 local linear verification, all-zero initialization, odd-symmetry bias invariance, linear versus nonlinear model capacity, learning-rate regimes, and `tanh` activation saturation. The closing diagnostic checkpoint (distinguishing derivative bugs from optimization and initialization failures) will be added once completed.
-:::
+<p class="chapter-kicker">Milestone 1 · Unit 7 · Completed 28 November 2026</p>
 
 Unit 6 established that the explicit NumPy backward pass in [mlp_numpy.py](../assets/mlp_numpy.py) agrees with central differences to $\le 4.55 \times 10^{-11}$ and with PyTorch autograd to $\le 4.44 \times 10^{-16}$. In this unit, those verified gradients drive an iterative training loop on a small nonlinear regression task, and controlled experiments isolate how initialization, symmetry, nonlinearity, learning rate, and saturation govern training behavior even when every derivative is exact.
 
@@ -287,6 +283,102 @@ With $b_1$ scaled at $0.5$ and $W_1$ scaled at $20.0$, all eight transition poin
 Every transition sits inside $[-0.24, +0.14]$—nowhere near the turning points of $\sin(x)$ at $\pm\pi/2 \approx \pm 1.57$, where all eight units are already flat at $\pm 1$. Because saturation freezes Layer 1, those transition points cannot migrate outward. Layer 2 (`W2`, `b2`) still receives healthy gradients and fits the best linear combination it can of eight frozen step functions clustered at $x \approx 0$, leaving flat plateaus on both sides and a sharp wiggle around the origin where the slightly offset transitions overlap with opposite output weights.
 :::
 
-## Ahead: closing diagnostic checkpoint
+## Unit checkpoint: the full training cycle and failure diagnosis
 
-The final section of Unit 7 (to be completed in the next session) will synthesize the complete training cycle and diagnose failing runs—distinguishing a **derivative bug** from an **optimization** or **initialization/saturation** problem using measurements beyond whether the loss decreases.
+### Part 1: the training cycle and the backprop/optimizer boundary
+
+For one iteration $t$ of full-batch gradient descent on the two-layer MLP:
+
+1. List the stages of a single step in order, naming what enters each stage, what leaves it, and which stages modify parameters.
+2. Draw the boundary between **backpropagation** and the **optimizer**: what question does each answer, and why is keeping them separate useful?
+
+### Part 2: diagnosing three failing runs
+
+Consider three runs of the same two-layer `tanh` MLP ($B = 64, d = 1, h = 8$) on $y = \sin(x)$, logging the loss trajectory, step-0 activation statistics, gradient norms, and the step-0 local linear prediction ratio
+
+$$
+r(\eta) = \frac{L(\theta^{(0)} - \eta \tilde{g}^{(0)}) - L(\theta^{(0)})}{-\eta \|\tilde{g}^{(0)}\|_2^2},
+$$
+
+where $\tilde{g}^{(0)}$ is the vector returned by `backward`:
+
+- **Run A:** Loss climbs `0.330` (step 0) $\to$ `0.98` (step 1) $\to$ `3.42` (step 2) $\to$ `1.4e3` (step 5) $\to$ `NaN` (step 10). Step-0 checks: $r(10^{-5}) = 0.99998$; central differences ($\varepsilon = 10^{-5}$) match `backward` within `3.1e-11`; $\operatorname{mean}(1 - H^2) = 0.70$, frac($|H| > 0.99$) $= 0.2\%$, $\|G_{W_1}\|_F = 0.94$, $\|G_{W_2}\|_F = 0.92$.
+- **Run B:** At $\eta = 0.05$ over 500 steps, loss decreases steadily from `0.330` to `0.185`, then stalls. Probing step 0 with smaller steps gives $r(10^{-2}) = 0.562$, $r(10^{-4}) = 0.580$, and $r(10^{-6}) = 0.580$. Step-0 internals: $\operatorname{mean}(1 - H^2) = 0.70$, frac($|H| > 0.99$) $= 0.2\%$, $\|G_{W_1}\|_F = 0.94$, $\|G_{W_2}\|_F = 0.92$.
+- **Run C:** At $\eta = 0.1$ over 500 steps, loss drops from `0.335` to `0.072` in the first ~30 steps and then plateaus; the fitted curve is flat on both sides and wiggles only near $x = 0$. Step-0 checks: $r(10^{-5}) = 0.99999$; central differences ($\varepsilon = 10^{-5}$) match `backward` within `4.2e-11`; $\operatorname{mean}(1 - H^2) = 0.058$, frac($|H| > 0.99$) $= 84\%$, $\|G_{W_1}\|_F = 0.028$, $\|G_{W_2}\|_F = 2.81$.
+
+For each run, identify the root cause, cite the decisive metrics, and state the next diagnostic check or fix. Then determine $\lim_{\eta \to 0} r(\eta)$ and whether the loss initially rises or falls for tiny $\eta$ in two specific bug cases:
+
+- **Case 1:** `backward` omits `/ B` in `G_Yhat`, so $\tilde{g} = B\, g_{\text{true}}$ ($B = 64$).
+- **Case 2:** `backward` has a sign flip, so $\tilde{g} = -g_{\text{true}}$.
+
+### Part 3: diagnostic synthesis
+
+Explain both halves of the diagnostic principle from Units 6–7: why a **decreasing loss** does not prove gradients are exact, and why **verified, exact gradients** do not guarantee successful training.
+
+::: {.callout-note collapse="true" title="Worked solution: training cycle, failure diagnosis, and ratio limits"}
+#### 1. The four stages of one training step
+
+| Stage | Inputs | Outputs | Modifies parameters? |
+|---|---|---|---|
+| **Forward pass** | Batch $X$ `(B, d)`, parameters $(W_1, b_1, W_2, b_2)$ | Predictions $\hat{Y}$ `(B, 1)` and `cache` (`X`, `H`) | No |
+| **Loss evaluation** | Predictions $\hat{Y}$, targets $Y$ `(B, 1)` | Scalar MSE loss $L$ and residuals $E = \hat{Y} - Y$ `(B, 1)` | No |
+| **Backward pass (backprop)** | Residuals $E$, `cache`, parameters | Loss gradients $(G_{W_1}, G_{b_1}, G_{W_2}, G_{b_2})$ | No |
+| **Parameter update (optimizer)** | Parameters, gradients, learning rate $\eta$ | Updated parameters $\theta^{(t+1)} = \theta^{(t)} - \eta g^{(t)}$ | **Yes** |
+
+- **Backpropagation** answers *"at the current $\theta^{(t)}$, how sensitive is the scalar loss $L$ to every parameter?"* by combining local operation derivatives in reverse via the chain rule. It never mutates parameters.
+- **The optimizer** answers *"given those gradients (and any optimizer state), how should we update $\theta^{(t)}$?"* Keeping this boundary clean allows replacing vanilla gradient descent with momentum, Adam, or learning-rate schedules without touching `backward`, and modifying the model architecture without rewriting the optimizer.
+
+#### 2. What the step-0 ratio $r(\eta)$ proves as $\eta \to 0$
+
+Using the first-order approximation with the **true** gradient $g_{\text{true}} = \nabla_\theta L(\theta^{(0)})$, taking a step $\Delta \theta = -\eta \tilde{g}$ changes the loss by
+
+$$
+L(\theta^{(0)} - \eta \tilde{g}) - L(\theta^{(0)}) = g_{\text{true}}^\top (-\eta \tilde{g}) + O(\eta^2) = -\eta\, (g_{\text{true}}^\top \tilde{g}) + O(\eta^2).
+$$
+
+Dividing by the predicted drop $-\eta \|\tilde{g}\|_2^2$ gives
+
+$$
+r(\eta) = \frac{g_{\text{true}}^\top \tilde{g}}{\|\tilde{g}\|_2^2} + O(\eta)
+\quad\xrightarrow{\eta \to 0}\quad
+\frac{g_{\text{true}}^\top \tilde{g}}{\|\tilde{g}\|_2^2}.
+$$
+
+When $\tilde{g} = g_{\text{true}}$ (and $g_{\text{true}} \neq 0$), the numerator and denominator cancel identically:
+
+$$
+\lim_{\eta \to 0} r(\eta) = \frac{\|g_{\text{true}}\|_2^2}{\|g_{\text{true}}\|_2^2} = 1,
+$$
+
+**regardless of how steep or shallow the loss surface is.** Any limit other than $1$ directly proves $\tilde{g} \neq g_{\text{true}}$.
+
+Checking the two concrete bug cases:
+
+- **Case 1 ($\tilde{g} = 64\, g_{\text{true}}$):**
+  $$
+  \lim_{\eta \to 0} r(\eta) = \frac{g_{\text{true}}^\top (64\, g_{\text{true}})}{\|64\, g_{\text{true}}\|_2^2} = \frac{64\,\|g_{\text{true}}\|_2^2}{64^2\,\|g_{\text{true}}\|_2^2} = \frac{1}{64} \approx 0.0156.
+  $$
+  Because the denominator squares the scale factor, the predicted drop grows by $64^2 = 4096$ while the actual drop grows by $64$. Since $1/64 > 0$, the loss still **decreases** for tiny $\eta$ (the direction is right, only the magnitude is wrong).
+- **Case 2 ($\tilde{g} = -g_{\text{true}}$):**
+  $$
+  \lim_{\eta \to 0} r(\eta) = \frac{g_{\text{true}}^\top (-g_{\text{true}})}{\|-g_{\text{true}}\|_2^2} = -1.
+  $$
+  Since $-1 < 0$, the loss **increases** even for tiny $\eta$ because the update steps directly uphill.
+
+#### 3. Diagnosing Runs A, B, and C
+
+| Run | Root cause | Decisive evidence | Next check or fix |
+|---|---|---|---|
+| **A** | **Optimization failure** ($\eta$ too large, $\eta c > 2$) | Loss blows up to `NaN` from step 1 while $r(10^{-5}) = 0.99998$ and central differences (`3.1e-11`) verify exact gradients, and $\operatorname{mean}(1 - H^2) = 0.70$ rules out saturation. | Decrease $\eta$ (e.g., into the stable $\eta \approx 0.1$ regime). |
+| **B** | **Derivative bug** in `backward` (or loss/backward mismatch) | As $\eta \to 0$, $r(\eta)$ locks onto `0.580` instead of `1.000`, proving $\tilde{g} \neq g_{\text{true}}$. Loss still drops because $0.58 > 0$ places $-\tilde{g}$ inside the descent half-space ($g_{\text{true}}^\top \tilde{g} > 0$). | Run Unit 6's per-array central-difference or PyTorch autograd check on `W1`, `b1`, `W2`, `b2` (and compare `loss`) to isolate the buggy line from the pass/fail signature. |
+| **C** | **Initialization / saturation** (`W1` scale too large) | Exact gradients ($r(10^{-5}) = 0.99999$, central diff `4.2e-11`) rule out derivative bugs; `84%` saturation ($\operatorname{mean}(1 - H^2) = 0.058$) crushes $\|G_{W_1}\|_F$ (`0.028`) while inflating $\|G_{W_2}\|_F$ (`2.81`) and freezing transitions near $x = 0$. | Reduce `W1`'s initialization scale so initial pre-activations stay inside `tanh`'s active region. |
+
+#### 4. Diagnostic synthesis
+
+- **Why decreasing loss does not verify gradients:** Locally, any update vector inside the 180° descent half-space ($g_{\text{true}}^\top \tilde{g} > 0$) lowers the loss for small enough $\eta$. A buggy backward pass—such as Run B ($r \to 0.58$) or Case 1 ($r \to 1/64$)—can still produce a smoothly falling loss curve while failing to compute true derivatives.
+- **Why exact gradients do not guarantee successful training:** Backpropagation only reports the local slope at the current point. Successful optimization still depends on a stable learning rate (Run A), non-saturating, symmetry-breaking initialization (Run C and Exercise 2), sufficient model capacity (the linear collapse in Exercise 2), and enough training steps.
+:::
+
+## Ahead: Milestone 2
+
+With Unit 7 complete, all seven units of **Milestone 1** are in place—from scalar derivatives and computational graphs through matrix calculus, explicit NumPy backpropagation, numerical and PyTorch verification, and training diagnosis. **Milestone 2** builds on this foundation by moving from regression and squared error to probability distributions, log-likelihood, softmax, cross-entropy, and next-token language modeling.

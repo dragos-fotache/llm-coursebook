@@ -17,7 +17,7 @@ The chapters grow out of the learning sessions. Each brings together the explana
 
 [Unit 6: Gradient verification and PyTorch](units/06-gradient-verification.qmd) is complete. It derives and measures the central-difference trade-off between truncation error and floating-point roundoff, checks all 13 parameters with justified tolerances, verifies the NumPy backward pass against PyTorch autograd, explains gradient accumulation and `torch.no_grad()`, and uses checker discrepancies to diagnose backward-pass bugs.
 
-[Unit 7: Training and diagnosis](units/07-training-and-diagnosis.qmd) is **in progress** (recorded through Exercise 3). It connects verified gradients to full-batch gradient descent on $y = \sin(x)$, checks the step-0 local linear prediction ratio and all-zero initialization, proves exact odd-symmetry bias invariance, compares linear and nonlinear capacity, and runs controlled learning-rate and `tanh` saturation experiments. The closing diagnostic checkpoint is ahead.
+[Unit 7: Training and diagnosis](units/07-training-and-diagnosis.qmd) is complete. It connects verified gradients to full-batch gradient descent on $y = \sin(x)$, checks the step-0 local linear prediction ratio and all-zero initialization, proves exact odd-symmetry bias invariance, compares linear and nonlinear capacity, runs controlled learning-rate and `tanh` saturation experiments, and closes with a diagnostic checkpoint separating derivative bugs from optimization and initialization failures.
 :::
 
 ## Reading this book
